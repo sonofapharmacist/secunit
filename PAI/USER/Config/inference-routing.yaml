@@ -1,0 +1,29 @@
+version: 2
+decision_date: 2026-06-03
+description: |
+  Per-model routing manifest for local inference.
+  Populate with your own hosts and benchmark data.
+
+  Fast tier:     batch p50 < 5000ms
+  Standard tier: batch p50 5000–15000ms
+  Smart tier:    high-capacity models; latency secondary
+
+  Benchmark with: bun PAI/TOOLS/BenchmarkLocalModels.ts --host <addr>
+  Quality-test with: bun PAI/TOOLS/QualityTestModels.ts --host <addr>
+
+inference_hosts:
+  host1:
+    base_url: "http://localhost:11434"    # your primary inference server
+  host2:
+    base_url: "http://localhost:11435"    # optional secondary
+
+models:
+  - name: "your-model-name"
+    preferred_host: "host1"
+    tier: "standard"
+    tok_per_s: 0
+    warm_p50_ms: 0
+    quality_pct: 0
+    requires_no_think: false
+    excluded: false
+    notes: "Replace with real data from BenchmarkLocalModels.ts + QualityTestModels.ts"

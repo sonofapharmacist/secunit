@@ -1,0 +1,51 @@
+version: 1
+decision_date: 2026-06-03
+description: >
+  Skill-level routing preferences. Each skill declares its preferred inference
+  tier
+
+  and optional model hints. At runtime, Inference.ts resolves tier → available
+  models
+
+  via inference-routing.yaml, then selects the best available model.
+
+
+  If a skill does not appear here, Inference.ts uses --level CLI param or
+  defaults
+
+  to 'standard' tier. Missing skills trigger a debug log (not an error).
+skills:
+  - name: tldr-librarian
+    preferred_tier: fast
+    description: Newsletter ingestion; prioritize throughput
+    model_hints: []
+  - name: research
+    preferred_tier: standard
+    description: Multi-source research synthesis; needs capability over speed
+    model_hints:
+      - qwen2.5:14b-instruct-q4_K_M
+      - gemma3:12b
+  - name: fabric
+    preferred_tier: fast
+    description: Pattern extraction (extract_wisdom, summarize, etc.); throughput priority
+    model_hints:
+      - qwen2.5-coder:7b-instruct-q4_K_M
+      - deepseek-coder-v2:lite
+  - name: extract-wisdom
+    preferred_tier: fast
+    description: Structured wisdom/insight extraction; fast pattern matching
+    model_hints:
+      - qwen2.5-coder:7b-instruct-q4_K_M
+      - deepseek-coder-v2:lite
+  - name: becreative
+    preferred_tier: standard
+    description: Verbalized Sampling divergent ideation; needs reasoning depth
+    model_hints:
+      - gemma3:12b
+      - qwen2.5:14b-instruct-q4_K_M
+  - name: eureka
+    preferred_tier: standard
+    description: Moonshot/frame-shift mining synthesis; needs strong reasoning
+    model_hints:
+      - qwen3:30b-a3b-q4_K_M
+      - gemma3:12b

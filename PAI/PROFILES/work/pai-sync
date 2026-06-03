@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# ══════════════════════════════════════════════════════════════════════════════
+# pai-sync — work machine PAI sync script
+#
+# DEPLOY TO:  ~/.local/bin/pai-sync
+# MAKE EXEC:  chmod +x ~/.local/bin/pai-sync
+#
+# USE INSTEAD OF: git pull / git fetch in ~/.claude
+# DO NOT USE:     on personal machines — they have no work/personal CLAUDE.md split
+#
+# PURPOSE:
+#   Pulls PAI framework updates from Forgejo (origin/main) while keeping
+#   the work-machine CLAUDE.md intact. The work CLAUDE.md loads WORK_PROFILE
+#   instead of PRINCIPAL_IDENTITY/TELOS so no personal data lands on
+#   corporate hardware.
+#
+# CLAUDE.MD — THREE ZONES:
+#   UNIVERSAL-STRUCTURAL:  MODES · Operational Rules · Operational Notes
+#                          PAI System routing table · Project-Specific Rules
+#                          → Apply from upstream to work CLAUDE.md
+#   WORK-SPECIFIC:         pai-sync/pai-push rules · work infra · corporate workflow
+#                          → Already in work CLAUDE.md, preserve as-is
+#   PERSONAL:              @-import lines · GP Identity/Voice · Life Goals · Munro
+#                          → Skip, never pull from upstream
+#
+#   When upstream changes CLAUDE.md, shows the affected commits and opens
+#   a Claude session that reads both versions and applies the right changes.
+#
+# ONE-TIME SETUP (idempotent — script self-configures on first run):
+#   The script writes "CLAUDE.md merge=ours" to .git/info/attributes and
+#   sets merge.ours.driver=true so future pulls never overwrite CLAUDE.md.
+#   You can also run these manually:
+#     echo "CLAUDE.md merge=ours" >> ~/.claude/.git/info/attributes
+#     git -C ~/.claude config merge.ours.driver true
+#
+# WORK MACHINE SETUP CHECKLIST (new machine):
+#   1. git clone <forgejo-url> ~/.claude
+#   2. cp ~/.claude/PAI/PROFILES/work/CLAUDE.md ~/.claude/CLAUDE.md
+#   3. git -C ~/.claude update-index --skip-worktree CLAUDE.md
+#   4. cp ~/.claude/PAI/PROFILES/work/pai-sync ~/.local/bin/pai-sync
+#   5. cp ~/.claude/PAI/PROFILES/work/pai-push ~/.local/bin/pai-push
+#   6. chmod +x ~/.local/bin/pai-sync ~/.local/bin/pai-push
+#   7. pai-sync    ← first run configures merge driver, then syncs
+#
+# ONGOING:
+#   pai-sync   ← pull framework updates from Forgejo (replaces git pull)
+#   pai-push   ← sync live CLAUDE.md back to profile after local edits
+# ══════════════════════════════════════════════════════════════════════════════
+
+set -euo pipefail
+
+CLAUDE_DIR="${HOME}/.claude"
+UPSTREAM="origin/main"
+
+# ── 1. Ensure merge driver is configured (idempotent) ────────────────────────
+ATTRS_FILE="${CLAUDE_DIR}/.git/info/attributes"
+if ! grep -q "CLAUDE.md merge=ours" "${ATTRS_FILE}" 2>/dev/null; then
+  echo "CLAUDE.md merge=ours" >> "${ATTRS_FILE}"
+  echo "✓ merge driver: CLAUDE.md merge=ours written to .git/info/attributes"
+fi
+if ! git -C "${CLAUDE_DIR}" config merge.ours.driver &>/dev/null; then
+  git -C "${CLAUDE_DIR}" config merge.ours.driver true
+  echo "✓ merge driver: merge.ours.driver=true configured"
+fi
+
+# ── 2. Fetch ─────────────────────────────────────────────────────────────────
+echo "Fetching ${UPSTREAM}..."
+git -C "${CLAUDE_DIR}" fetch origin
+
+LOCAL=$(git -C "${CLAUDE_DIR}" rev-parse HEAD)
+REMOTE=$(git -C "${CLAUDE_DIR}" rev-parse "${UPSTREAM}")
+
+if [ "${LOCAL}" = "${REMOTE}" ]; then
+  echo "Already up to date."
+  exit 0
+fi
+
+# ── 3. Check if CLAUDE.md changed in incoming commits ────────────────────────
+CLAUDE_COMMITS=$(git -C "${CLAUDE_DIR}" log --oneline "${LOCAL}..${REMOTE}" -- CLAUDE.md)
+
+if [ -n "${CLAUDE_COMMITS}" ]; then
+  echo ""
+  echo "⚠  CLAUDE.md changed upstream:"
+  echo "${CLAUDE_COMMITS}"
+  echo ""
+  read -rp "Open Claude to port universal-structural changes to work CLAUDE.md? [y/N] " REPLY
+  if [[ "${REPLY}" =~ ^[Yy]$ ]]; then
+    claude "pai-sync: origin/main CLAUDE.md changed in these commits: ${CLAUDE_COMMITS}. Compare git show origin/main:CLAUDE.md against ~/.claude/CLAUDE.md (the work version). Identify additions in origin/main not present in the work CLAUDE.md. Apply only universal-structural additions (MODES, Operational Rules, Operational Notes, PAI System routing table, Project-Specific Rules) to ~/.claude/CLAUDE.md. Skip personal sections (@-import lines, GP Identity/Voice, GP Life Goals/Telos, Munro). Skip work-specific rules already present in the work version (pai-sync/pai-push workflow rules, work infra references)."
+    echo ""
+    read -rp "Continue with pull? [Y/n] " CONT
+    [[ "${CONT}" =~ ^[Nn]$ ]] && exit 0
+  fi
+fi
+
+# ── 4. Reset auto-generated and runtime state files ─────────────────────────
+# These regenerate independently on each machine — resetting before pull prevents
+# conflicts on every sync. JSONL logs (execution.jsonl) are NOT reset here;
+# .gitattributes defines merge=union so git handles them automatically.
+
+RESET_FILES=(
+  "PAI/DOCUMENTATION/ARCHITECTURE_SUMMARY.md"
+  "PAI/PULSE/state/state.json"
+  "PAI/PULSE/state/da/diary.jsonl"
+  "PAI/PULSE/Performance/aggregator-state.json"
+  "PAI/USER/TELOS/PAI_STATE.json"
+  "cache/changelog.md"
+)
+
+echo ""
+echo "Resetting auto-generated and state files..."
+for f in "${RESET_FILES[@]}"; do
+  if git -C "${CLAUDE_DIR}" ls-files --error-unmatch "${f}" &>/dev/null 2>&1; then
+    git -C "${CLAUDE_DIR}" checkout HEAD -- "${f}" && echo "  ✓ reset: ${f}"
+  fi
+done
+
+# Reset marketplace data directory (multiple nested files)
+if [ -d "${CLAUDE_DIR}/plugins/marketplaces" ]; then
+  git -C "${CLAUDE_DIR}" checkout HEAD -- plugins/marketplaces/ 2>/dev/null \
+    && echo "  ✓ reset: plugins/marketplaces/" || true
+fi
+
+# ── 5. Commit any remaining local changes before rebase ──────────────────────
+# Prevents --autostash from creating stash conflicts. Stash pops can silently
+# leave conflict markers in files and exit 0, which causes corrupted commits.
+if ! git -C "${CLAUDE_DIR}" diff --quiet || ! git -C "${CLAUDE_DIR}" diff --cached --quiet; then
+  echo ""
+  echo "Committing local changes before rebase..."
+  git -C "${CLAUDE_DIR}" add -A
+  git -C "${CLAUDE_DIR}" commit -m "chore(auto): checkpoint before pai-sync rebase"
+  echo "  ✓ local changes committed"
+fi
+
+# ── 6. Pull (CLAUDE.md protected by merge driver, no autostash needed) ───────
+echo ""
+echo "Rebasing onto ${UPSTREAM}..."
+if ! git -C "${CLAUDE_DIR}" pull --rebase origin main; then
+  echo ""
+  echo "⚠  Rebase failed — a non-auto-gen file has a real conflict."
+  echo "   Resolve conflicts, then: git -C ~/.claude rebase --continue"
+  echo "   Or abort with:           git -C ~/.claude rebase --abort"
+  exit 1
+fi
+
+# ── Safety: ensure no conflict markers slipped through ───────────────────────
+CONFLICT_FILES=$(grep -rl "<<<<<<< " "${CLAUDE_DIR}/PAI/" 2>/dev/null \
+  | grep -v "/.git/" | grep -v "/node_modules/" \
+  | grep -v "/MEMORY/" | grep -v "/PROFILES/" || true)
+if [ -n "${CONFLICT_FILES}" ]; then
+  echo ""
+  echo "⚠  Conflict markers found after rebase — fix before continuing:"
+  echo "${CONFLICT_FILES}"
+  exit 1
+fi
+
+# ── 8. Regenerate ARCHITECTURE_SUMMARY.md (auto-generated — never merge) ────
+echo ""
+echo "Regenerating ARCHITECTURE_SUMMARY.md..."
+if bun "${CLAUDE_DIR}/PAI/TOOLS/ArchitectureSummaryGenerator.ts" generate 2>/dev/null; then
+  if ! git -C "${CLAUDE_DIR}" diff --quiet PAI/DOCUMENTATION/ARCHITECTURE_SUMMARY.md; then
+    git -C "${CLAUDE_DIR}" add PAI/DOCUMENTATION/ARCHITECTURE_SUMMARY.md
+    git -C "${CLAUDE_DIR}" commit -m "chore(auto): regenerate ARCHITECTURE_SUMMARY after pai-sync"
+    echo "✓ ARCHITECTURE_SUMMARY.md regenerated and committed"
+  else
+    echo "✓ ARCHITECTURE_SUMMARY.md unchanged"
+  fi
+else
+  echo "⚠  ArchitectureSummaryGenerator failed — skipping (sync still complete)"
+fi
+
+echo ""
+echo "✓ PAI synced — recent commits:"
+git -C "${CLAUDE_DIR}" log --oneline -5

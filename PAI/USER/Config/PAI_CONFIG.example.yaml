@@ -1,0 +1,30 @@
+# PAI_CONFIG.yaml — Fill in your values and rename to PAI_CONFIG.yaml
+# See PAI/DOCUMENTATION/ for the full schema.
+
+version: "5.0.0"
+
+principal:
+  name: "<your-name>"
+  timezone: "America/New_York"
+
+da:
+  name: "<your-da-name>"
+
+anthropic:
+  api_key: "<sk-ant-...>"
+
+elevenlabs:
+  api_key: "<your-elevenlabs-key>"
+  voice_id: "<primary-voice-id>"
+  secondary_voice_id: "<secondary-voice-id>"
+
+pulse:
+  port: 31337
+
+services:
+  forgejo:
+    base_url: "<https://your-forgejo-instance>"
+    token: "<your-forgejo-token>"
+
+ollama:
+  base_url: "http://localhost:11434"

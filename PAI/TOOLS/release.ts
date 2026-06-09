@@ -61,7 +61,7 @@ const ALGO_VERSION_LATEST = (() => {
 let stagedSkillCount = 0
 
 // Text file extensions to include in identifier scan
-const TEXT_EXTS = new Set(['.ts', '.js', '.mts', '.mjs', '.md', '.yaml', '.yml', '.json', '.sh', '.toml', '.txt', '.env', '.example'])
+const TEXT_EXTS = new Set(['.ts', '.js', '.mts', '.mjs', '.md', '.yaml', '.yml', '.json', '.sh', '.toml', '.txt', '.env', '.example', '.log'])
 
 // ── CLI args ─────────────────────────────────────────────────────────────────
 
@@ -246,6 +246,11 @@ function strip() {
   rm(join(pai, 'PULSE', 'state'))
   rm(join(pai, 'Pulse', 'state'))  // lowercase alias
   log('  ✓ PULSE/state/ stripped')
+
+  // --- PULSE/logs/ → strip (runtime logs contain local file paths) --
+  rm(join(pai, 'PULSE', 'logs'))
+  rm(join(pai, 'Pulse', 'logs'))
+  log('  ✓ PULSE/logs/ stripped')
 
   // --- PULSE/Observability/src/app/telos/ → strip (personal goals) -
   rm(join(pai, 'PULSE', 'Observability', 'src', 'app', 'telos'))

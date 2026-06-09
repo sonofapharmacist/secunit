@@ -1,5 +1,5 @@
 version: 2
-decision_date: 2026-06-03
+decision_date: 2026-06-09
 description: |
   Per-model routing manifest for local inference.
   Populate with your own hosts and benchmark data.

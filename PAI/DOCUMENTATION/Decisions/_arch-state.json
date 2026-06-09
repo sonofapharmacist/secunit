@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastUpdated": "2026-06-03T16:19:17.973Z",
+  "lastUpdated": "2026-06-09T21:06:39.849Z",
   "algorithmVersion": "7.1.0",
   "subsystems": [
     "Life OS thesis (what PAI is for)",
@@ -25,7 +25,8 @@
     "Terminal tabs",
     "Tools reference",
     "ISA format spec",
-    "Kohnfelder framework (CIA, STRIDE, DREAD, patterns, SDR)"
+    "Kohnfelder framework (CIA, STRIDE, DREAD, patterns, SDR)",
+    "Kohnfelder full synthesis"
   ],
   "pipelineDomains": [
     "Security",

@@ -162,8 +162,10 @@ function wireSignals(controller: AbortController, state: RunState, timeoutContro
   return { clear: () => { process.off("SIGINT", handler); process.off("SIGTERM", handler); } };
 }
 async function postMoonshot(apiKey: string, args: Args, prompt: string, signal: AbortSignal): Promise<Response> {
-  const body: JsonRecord = { model: args.model, messages: [{ role: "user", content: prompt }], stream: true, temperature: args.temperature, max_tokens: args.maxTokens };
-  return await fetch("https://api.moonshot.ai/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
+  const baseUrl = (process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1").replace(/\/$/, "");
+  const excludeReasoning = process.env.MOONSHOT_BASE_URL !== undefined;
+  const body: JsonRecord = { model: args.model, messages: [{ role: "user", content: prompt }], stream: true, temperature: args.temperature, max_tokens: args.maxTokens, ...(excludeReasoning ? { reasoning: { exclude: true } } : {}) };
+  return await fetch(`${baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
 }
 async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs: number): Promise<ReadableStreamReadResult<Uint8Array> | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;

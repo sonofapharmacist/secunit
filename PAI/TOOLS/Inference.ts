@@ -183,7 +183,7 @@ export interface InferenceOptions {
   userPrompt: string;
   level?: InferenceLevel;
   /** Route to Ollama HTTP API instead of claude subprocess. Default: 'claude'. */
-  backend?: 'claude' | 'ollama' | 'antigravity' | 'antigravity-api' | 'hermes';
+  backend?: 'claude' | 'ollama' | 'antigravity' | 'antigravity-api' | 'hermes' | 'nous' | 'openrouter';
   /** Ollama model name. Defaults to ollama.default_model from PAI_CONFIG.yaml. */
   model?: string;
   expectJson?: boolean;
@@ -293,7 +293,7 @@ export interface InferenceResult {
 
 // Level configurations
 const LEVEL_CONFIG: Record<InferenceLevel, { model: string; defaultTimeout: number }> = {
-  fast: { model: 'haiku', defaultTimeout: 15000 },
+  fast: { model: 'haiku', defaultTimeout: 20000 },
   standard: { model: 'sonnet', defaultTimeout: 30000 },
   smart: { model: 'opus', defaultTimeout: 90000 },
 };
@@ -378,6 +378,9 @@ const HELP_TEXT = `Usage:
   bun Inference.ts --backend antigravity <system_prompt> <user_prompt>
   bun Inference.ts --backend antigravity-api <system_prompt> <user_prompt>
   bun Inference.ts --backend hermes <system_prompt> <user_prompt>
+  bun Inference.ts --backend nous <system_prompt> <user_prompt>
+  bun Inference.ts --backend openrouter <system_prompt> <user_prompt>
+  bun Inference.ts --backend openrouter --model openai/gpt-4.1 <system_prompt> <user_prompt>
   bun Inference.ts --backend ollama <system_prompt> <user_prompt>
   bun Inference.ts --backend ollama --model qwen2.5-coder:14b <system_prompt> <user_prompt>
   bun Inference.ts --backend ollama --task-type general <system_prompt> <user_prompt>
@@ -388,10 +391,11 @@ const HELP_TEXT = `Usage:
   bun Inference.ts --measure --backend ollama --model qwen2.5-coder:7b
 
   NOTE: --backend antigravity-api uses GEMINI_API_KEY (likely metered). --backend antigravity uses subscription-backed CLI.
+  NOTE: --backend openrouter requires OPENROUTER_API_KEY in ~/.claude/.env
 
 Options:
   --level <fast|standard|smart>  Run level (default: standard; auto-inferred from model latency profile during --measure when omitted) — Claude only
-  --backend <claude|ollama|antigravity|antigravity-api>  Backend to use (default: claude)
+  --backend <claude|ollama|antigravity|antigravity-api|nous|hermes|openrouter>  Backend to use (default: claude)
   --model <name>                 Ollama model name (overrides task-type selection)
   --task-type <code|general>     Ollama model selection: code→default_model, general→general_model
   --prefer-local                 Try Ollama first; escalate to Claude on failure (overrides config)
@@ -1002,6 +1006,86 @@ async function runLatencyMeasure(options: RunLatencyMeasureOptions): Promise<voi
   }
 }
 
+export interface NousConfig {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  apiKeyEnv: string;
+  timeoutMs: number;
+  fallbackToSonnet: boolean;
+}
+
+export async function readNousConfig(): Promise<NousConfig> {
+  const fallback: NousConfig = {
+    enabled: true,
+    baseUrl: 'https://inference-api.nousresearch.com/v1',
+    model: 'nvidia/nemotron-3-ultra:free',
+    apiKeyEnv: 'NOUS_API_KEY',
+    timeoutMs: 45000,
+    fallbackToSonnet: true,
+  };
+  try {
+    const { readFile } = await import('fs/promises');
+    const { join } = await import('path');
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const configPath = join(home, '.claude', 'PAI', 'USER', 'Config', 'PAI_CONFIG.yaml');
+    const raw = await readFile(configPath, 'utf-8');
+    const cfg = Bun.YAML.parse(raw) as Record<string, unknown>;
+    const nous = cfg?.nous as Record<string, unknown> | undefined;
+    if (!nous) return fallback;
+    return {
+      enabled: nous.enabled !== undefined ? Boolean(nous.enabled) : fallback.enabled,
+      baseUrl: typeof nous.base_url === 'string' ? nous.base_url : fallback.baseUrl,
+      model: typeof nous.model === 'string' ? nous.model : fallback.model,
+      apiKeyEnv: typeof nous.api_key_env === 'string' ? nous.api_key_env : fallback.apiKeyEnv,
+      timeoutMs: typeof nous.timeout_ms === 'number' ? nous.timeout_ms : fallback.timeoutMs,
+      fallbackToSonnet: nous.fallback_to_sonnet !== undefined ? Boolean(nous.fallback_to_sonnet) : fallback.fallbackToSonnet,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export interface OpenRouterConfig {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  apiKeyEnv: string;
+  timeoutMs: number;
+  fallbackToSonnet: boolean;
+}
+
+export async function readOpenRouterConfig(): Promise<OpenRouterConfig> {
+  const fallback: OpenRouterConfig = {
+    enabled: true,
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'anthropic/claude-sonnet-4-6',
+    apiKeyEnv: 'OPENROUTER_API_KEY',
+    timeoutMs: 45000,
+    fallbackToSonnet: true,
+  };
+  try {
+    const { readFile } = await import('fs/promises');
+    const { join } = await import('path');
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const configPath = join(home, '.claude', 'PAI', 'USER', 'Config', 'PAI_CONFIG.yaml');
+    const raw = await readFile(configPath, 'utf-8');
+    const cfg = Bun.YAML.parse(raw) as Record<string, unknown>;
+    const or = cfg?.openrouter as Record<string, unknown> | undefined;
+    if (!or) return fallback;
+    return {
+      enabled: or.enabled !== undefined ? Boolean(or.enabled) : fallback.enabled,
+      baseUrl: typeof or.base_url === 'string' ? or.base_url : fallback.baseUrl,
+      model: typeof or.model === 'string' ? or.model : fallback.model,
+      apiKeyEnv: typeof or.api_key_env === 'string' ? or.api_key_env : fallback.apiKeyEnv,
+      timeoutMs: typeof or.timeout_ms === 'number' ? or.timeout_ms : fallback.timeoutMs,
+      fallbackToSonnet: or.fallback_to_sonnet !== undefined ? Boolean(or.fallback_to_sonnet) : fallback.fallbackToSonnet,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export interface HermesConfig {
   enabled: boolean;
   baseUrl: string;
@@ -1033,6 +1117,94 @@ export async function readHermesConfig(): Promise<HermesConfig> {
     };
   } catch {
     return fallback;
+  }
+}
+
+async function inferenceOpenRouter(options: InferenceOptions): Promise<InferenceResult> {
+  const startTime = Date.now();
+  const config = await readOpenRouterConfig();
+  const apiKey = process.env[config.apiKeyEnv];
+  if (!apiKey) {
+    return {
+      success: false, output: '',
+      error: `${config.apiKeyEnv} not set — required for --backend openrouter`,
+      latencyMs: Date.now() - startTime,
+      level: options.level ?? 'standard',
+      model: config.model,
+    };
+  }
+  const timeout = options.timeout ?? config.timeoutMs;
+  const model = options.model ?? config.model;
+  const url = `${config.baseUrl}/chat/completions`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://your-domain.example.com',
+        'X-Title': 'PAI',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: options.systemPrompt ?? '' },
+          { role: 'user', content: options.userPrompt },
+        ],
+        max_tokens: 4096,
+        stream: false,
+      }),
+    });
+
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+
+    if (!response.ok) {
+      let errBody = '';
+      try { errBody = await response.text(); } catch { /* ignore */ }
+      return {
+        success: false, output: '',
+        error: `OpenRouter API ${response.status}: ${errBody.slice(0, 200)}`,
+        latencyMs, level: options.level ?? 'standard', model,
+      };
+    }
+
+    const data = await response.json() as OpenAIChatCompletionsResponse;
+    const output = (data.choices?.[0]?.message?.content ?? '').trim();
+    const promptTokens = data.usage?.prompt_tokens;
+    const completionTokens = data.usage?.completion_tokens;
+
+    if (!options.expectJson) {
+      return { success: true, output, latencyMs, level: options.level ?? 'standard', model, promptTokens, completionTokens };
+    }
+
+    const objectMatch = output.match(/\{[\s\S]*\}/);
+    const arrayMatch = output.match(/\[[\s\S]*\]/);
+    for (const candidate of [objectMatch?.[0], arrayMatch?.[0]]) {
+      if (!candidate) continue;
+      try {
+        const parsed = JSON.parse(candidate);
+        return { success: true, output, parsed, latencyMs, level: options.level ?? 'standard', model, promptTokens, completionTokens };
+      } catch { /* try next */ }
+    }
+    return { success: false, output, error: 'Failed to parse JSON response', latencyMs, level: options.level ?? 'standard', model };
+
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    return {
+      success: false, output: '',
+      error: isAbort
+        ? `Timeout after ${timeout}ms (OpenRouter at ${url})`
+        : `Network error: ${(err as Error).message} (OpenRouter at ${url})`,
+      latencyMs, level: options.level ?? 'standard', model,
+    };
   }
 }
 
@@ -1104,6 +1276,92 @@ async function inferenceHermes(options: InferenceOptions): Promise<InferenceResu
       error: isAbort
         ? `Timeout after ${timeout}ms (Hermes proxy at ${url})`
         : `Network error: ${(err as Error).message} (Hermes proxy at ${url})`,
+      latencyMs, level: options.level ?? 'standard', model,
+    };
+  }
+}
+
+async function inferenceNous(options: InferenceOptions): Promise<InferenceResult> {
+  const startTime = Date.now();
+  const config = await readNousConfig();
+  const apiKey = process.env[config.apiKeyEnv];
+  if (!apiKey) {
+    return {
+      success: false, output: '',
+      error: `${config.apiKeyEnv} not set — required for --backend nous`,
+      latencyMs: Date.now() - startTime,
+      level: options.level ?? 'standard',
+      model: config.model,
+    };
+  }
+  const timeout = options.timeout ?? config.timeoutMs;
+  const model = options.model ?? config.model;
+  const url = `${config.baseUrl}/chat/completions`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: options.systemPrompt ?? '' },
+          { role: 'user', content: options.userPrompt },
+        ],
+        max_tokens: 4096,
+        stream: false,
+      }),
+    });
+
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+
+    if (!response.ok) {
+      let errBody = '';
+      try { errBody = await response.text(); } catch { /* ignore */ }
+      return {
+        success: false, output: '',
+        error: `Nous API ${response.status}: ${errBody.slice(0, 200)}`,
+        latencyMs, level: options.level ?? 'standard', model,
+      };
+    }
+
+    const data = await response.json() as OpenAIChatCompletionsResponse;
+    const output = (data.choices?.[0]?.message?.content ?? '').trim();
+    const promptTokens = data.usage?.prompt_tokens;
+    const completionTokens = data.usage?.completion_tokens;
+
+    if (!options.expectJson) {
+      return { success: true, output, latencyMs, level: options.level ?? 'standard', model, promptTokens, completionTokens };
+    }
+
+    const objectMatch = output.match(/\{[\s\S]*\}/);
+    const arrayMatch = output.match(/\[[\s\S]*\]/);
+    for (const candidate of [objectMatch?.[0], arrayMatch?.[0]]) {
+      if (!candidate) continue;
+      try {
+        const parsed = JSON.parse(candidate);
+        return { success: true, output, parsed, latencyMs, level: options.level ?? 'standard', model, promptTokens, completionTokens };
+      } catch { /* try next */ }
+    }
+    return { success: false, output, error: 'Failed to parse JSON response', latencyMs, level: options.level ?? 'standard', model };
+
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    return {
+      success: false, output: '',
+      error: isAbort
+        ? `Timeout after ${timeout}ms (Nous API at ${url})`
+        : `Network error: ${(err as Error).message} (Nous API at ${url})`,
       latencyMs, level: options.level ?? 'standard', model,
     };
   }
@@ -1716,7 +1974,8 @@ export async function inference(options: InferenceOptions): Promise<InferenceRes
       (result.fallbackUsed || result.resolvedUrl)
         ? 'local'
         : (options.backend === 'antigravity-api' ? 'antigravity' :
-       options.backend === 'hermes' ? 'local' : (options.backend ?? 'claude'));
+           options.backend === 'hermes' ? 'local' :
+           options.backend === 'nous' ? 'local' : (options.backend ?? 'claude'));
     const entry: LatencyPerInvocationEntry = {
       timestamp: new Date().toISOString(),
       model_selected: result.model ?? result.fallbackModel ?? (options.model ?? decision.tier),
@@ -1742,7 +2001,8 @@ export async function inference(options: InferenceOptions): Promise<InferenceRes
     const message = err instanceof Error ? err.message : String(err);
     const errorBackend: LatencyPerInvocationEntry['backend'] =
       options.backend === 'antigravity-api' ? 'antigravity' :
-      options.backend === 'hermes' ? 'local' : (options.backend ?? 'claude');
+      options.backend === 'hermes' ? 'local' :
+      options.backend === 'nous' ? 'local' : (options.backend ?? 'claude');
     const entry: LatencyPerInvocationEntry = {
       timestamp: new Date().toISOString(),
       model_selected: options.model ?? decision.tier,
@@ -1803,6 +2063,37 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
     const result = await inferenceHermes(effectiveOptions);
     logInferenceCall('local', result, effectiveOptions.level ?? 'standard', effectiveOptions.taskType);
     return result;
+  }
+
+  if (effectiveOptions.backend === 'nous') {
+    const nousResult = await inferenceNous(effectiveOptions);
+    if (nousResult.success) {
+      logInferenceCall('local', nousResult, effectiveOptions.level ?? 'standard', effectiveOptions.taskType);
+      return nousResult;
+    }
+    console.error(`[Inference] Nous failed (${(nousResult.error ?? '').slice(0, 80)}) — falling back to Sonnet`);
+    const sonnetResult = await inferenceClaudeSubprocess({ ...effectiveOptions, level: 'standard' });
+    const finalResult = { ...sonnetResult, fallbackUsed: true, fallbackModel: nousResult.model, fallbackReason: nousResult.error ?? 'nous_error' };
+    logInferenceCall('claude', finalResult, 'standard', effectiveOptions.taskType);
+    return finalResult;
+  }
+
+  if (effectiveOptions.backend === 'openrouter') {
+    const orResult = await inferenceOpenRouter(effectiveOptions);
+    if (orResult.success) {
+      logInferenceCall('local', orResult, effectiveOptions.level ?? 'standard', effectiveOptions.taskType);
+      return orResult;
+    }
+    const orConfig = await readOpenRouterConfig();
+    if (orConfig.fallbackToSonnet) {
+      console.error(`[Inference] OpenRouter failed (${(orResult.error ?? '').slice(0, 80)}) — falling back to Sonnet`);
+      const sonnetResult = await inferenceClaudeSubprocess({ ...effectiveOptions, level: 'standard' });
+      const finalResult = { ...sonnetResult, fallbackUsed: true, fallbackModel: orResult.model, fallbackReason: orResult.error ?? 'openrouter_error' };
+      logInferenceCall('claude', finalResult, 'standard', effectiveOptions.taskType);
+      return finalResult;
+    }
+    logInferenceCall('local', orResult, effectiveOptions.level ?? 'standard', effectiveOptions.taskType);
+    return orResult;
   }
 
   const level = effectiveOptions.level ?? 'standard';
@@ -2063,7 +2354,7 @@ async function main() {
   let levelExplicit = false;
   let mode: 'inference' | 'advisor' = 'inference';
   let autoState = false;  // v3.24 P5
-  let backend: 'claude' | 'ollama' | 'antigravity' | 'antigravity-api' | 'hermes' = 'claude';
+  let backend: 'claude' | 'ollama' | 'antigravity' | 'antigravity-api' | 'hermes' | 'nous' | 'openrouter' = 'claude';
   let model: string | undefined;
   let fallbackToOllama: boolean | undefined;
   let localFirst: boolean | undefined;
@@ -2090,10 +2381,10 @@ async function main() {
       autoState = true;
     } else if (args[i] === '--backend' && args[i + 1]) {
       const requestedBackend = args[i + 1].toLowerCase();
-      if (requestedBackend === 'claude' || requestedBackend === 'ollama' || requestedBackend === 'antigravity' || requestedBackend === 'antigravity-api' || requestedBackend === 'hermes') {
+      if (requestedBackend === 'claude' || requestedBackend === 'ollama' || requestedBackend === 'antigravity' || requestedBackend === 'antigravity-api' || requestedBackend === 'hermes' || requestedBackend === 'nous' || requestedBackend === 'openrouter') {
         backend = requestedBackend;
       } else {
-        console.error(`Invalid backend: ${args[i + 1]}. Use claude, ollama, antigravity, or antigravity-api.`);
+        console.error(`Invalid backend: ${args[i + 1]}. Use claude, ollama, antigravity, antigravity-api, hermes, nous, or openrouter.`);
         process.exit(1);
       }
       i++;

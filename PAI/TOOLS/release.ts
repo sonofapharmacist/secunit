@@ -10,7 +10,8 @@
  *   bun PAI/TOOLS/release.ts [--push] [--dry-run] [--verbose] [--version X.Y.Z]
  *                            [--bump patch|minor|major] [--bump-algo patch|minor|major]
  *
- *   --push                   Push to Forgejo after gates pass (default: stage + scan only)
+ *   --scan-only              Stage + scan only, skip push (default: push after confirmation)
+ *   --push                   No-op alias kept for backwards compatibility
  *   --dry-run                Stage only, skip all scans and push (fastest check)
  *   --verbose                Log every file operation
  *   --version X.Y.Z          Override version tag in commit (default: reads from settings.json)
@@ -48,6 +49,7 @@ const WORK_CLIENT_SKILLS = new Set(['asa', 'tabletop-exercise', 'aurascape'])
 const PRIVATE_SKILL_DIRS = new Set([
   'Recon', 'TabletopExercise', '_ARCHIVE',
   'app-security-assessment', 'app_best_practice', 'esi-branded-docx',
+  '_ES_SOLUTIONS_PLACEMENT',
 ])
 
 // Algorithm version — read from ALGORITHM/LATEST (authoritative; settings.json can drift)
@@ -65,10 +67,11 @@ const TEXT_EXTS = new Set(['.ts', '.js', '.mts', '.mjs', '.md', '.yaml', '.yml',
 
 const argv = process.argv.slice(2)
 const argSet = new Set(argv)
-const PUSH = argSet.has('--push')
+const PUSH = !argSet.has('--scan-only')  // default: push after confirmation; --scan-only to skip
 const DRY_RUN = argSet.has('--dry-run')
 const VERBOSE = argSet.has('--verbose')
 const YES = argSet.has('--yes')  // skip interactive confirmation
+const FORCE_SNAPSHOT = argSet.has('--force-snapshot')  // revert to single-commit history wipe
 const _versionIdx = argv.indexOf('--version')
 const VERSION_ARG = _versionIdx >= 0 ? argv[_versionIdx + 1] : undefined
 const _bumpIdx = argv.indexOf('--bump')
@@ -537,6 +540,7 @@ const SANITIZATIONS: Sanitization[] = [
       [/\bubullm\b/g, 'host2'],
       [/100\.126\.185\.104/g, '127.0.0.1'],
       [/100\.124\.228\.50/g, '127.0.0.1'],
+      [/gps-cyber\.com/g, 'your-domain.example.com'],
     ],
   },
   {
@@ -597,6 +601,38 @@ const SANITIZATIONS: Sanitization[] = [
       [/100\.126\.185\.104/g, '127.0.0.1'],
       [/\/home\/axcint09\//g, '/home/<username>/'],
       [/\baxcint09\b/g, '<username>'],
+    ],
+  },
+  {
+    rel: 'PAI/TOOLS/MigrateKnowledgeToArchive.ts',
+    replacements: [
+      [/\/home\/realuser\//g, '${HOME}/'],
+      [/-home-realuser/g, '-home-<username>'],
+    ],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Integration/DELIVERABLES.txt',
+    replacements: [[/\/home\/realuser\//g, '/home/<username>/']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Integration/PortkeyImplementationChecklist.md',
+    replacements: [[/\/home\/realuser\//g, '/home/<username>/']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Integration/PortkeyASAWorkflow.md',
+    replacements: [
+      [/\/home\/realuser\//g, '/home/<username>/'],
+      [/Evolving Solutions/g, 'your-organization'],
+    ],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Integration/PortkeyIntegration.md',
+    replacements: [[/\/home\/realuser\//g, '/home/<username>/']],
+  },
+  {
+    rel: 'hooks/PromptProcessing.hook.ts',
+    replacements: [
+      [/\bubullm\b/gi, 'your-inference-host'],
     ],
   },
 ]
@@ -784,51 +820,109 @@ function git(cwd: string, ...args: string[]): { ok: boolean; out: string } {
   return { ok: r.status === 0, out: (r.stdout + r.stderr).trim() }
 }
 
-function pushToForgejo(version: string): boolean {
-  log(`\n🚀 Pushing v${version} to Forgejo`)
+// ── Incremental release helpers ───────────────────────────────────────────────
 
+// Work dir persists across pushToForgejo so Forgejo + GitHub share one commit
+let _gitWorkDir: string | null = null
+let _hasClonedHistory = false
+
+function overlayStage(gitDir: string): void {
+  // Wipe everything except .git/, then copy fresh staged tree in
+  for (const entry of readdirSync(gitDir)) {
+    if (entry === '.git') continue
+    rmSync(join(gitDir, entry), { recursive: true, force: true })
+  }
+  for (const entry of readdirSync(STAGE_ROOT)) {
+    cpSync(join(STAGE_ROOT, entry), join(gitDir, entry), { recursive: true })
+  }
+}
+
+function setupGitWorkDir(primaryRemote: string, version: string): boolean {
+  const workDir = `${STAGE_ROOT}-git`
+  _gitWorkDir = workDir
+  rm(workDir)
+
+  if (!FORCE_SNAPSHOT) {
+    const r = spawnSync('git', ['clone', '--depth=50', primaryRemote, workDir], {
+      encoding: 'utf-8', stdio: 'pipe',
+    })
+    _hasClonedHistory = r.status === 0
+    if (_hasClonedHistory) {
+      log('  ✓ Cloned existing history — will produce incremental commit')
+    } else {
+      verbose(`clone: ${(r.stdout + r.stderr).trim()}`)
+      log('  ⚠ Clone failed — fresh init (first release or empty remote)')
+    }
+  } else {
+    log('  ℹ --force-snapshot: skipping clone, single-commit history wipe')
+  }
+
+  if (!_hasClonedHistory) {
+    ensureDir(workDir)
+    git(workDir, 'init')
+    git(workDir, 'remote', 'add', 'origin', primaryRemote)
+  }
+
+  git(workDir, 'config', 'user.email', 'secunit-release@local')
+  git(workDir, 'config', 'user.name', 'secunit-release')
+
+  overlayStage(workDir)
+  git(workDir, 'add', '-A')
+
+  const dirty = git(workDir, 'status', '--porcelain').out.trim()
   const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   const msg = `secunit v${version} — ${ts}`
 
-  const steps: Array<[string[], boolean]> = [
-    [['init'], true],
-    [['config', 'user.email', 'secunit-release@local'], true],
-    [['config', 'user.name', 'secunit-release'], true],
-    [['add', '-A'], true],
-    [['commit', '-m', msg], true],
-    [['tag', '-a', '-f', `v${version}`, '-m', `secunit v${version}`], true],
-    [['remote', 'add', 'origin', FORGEJO_REMOTE], false], // ok to fail if already exists
-    [['push', '--force', 'origin', 'HEAD:main'], true],
-    [['push', '--force', 'origin', `refs/tags/v${version}`], true],
-  ]
-
-  for (const [args, required] of steps) {
-    const { ok, out } = git(STAGE_ROOT, ...args)
-    verbose(`git ${args[0]}: ${out}`)
-    if (!ok && required) {
-      fail(`git ${args.join(' ')} failed:\n  ${out}`)
-      return false
-    }
+  if (dirty) {
+    const { ok, out } = git(workDir, 'commit', '-m', msg)
+    if (!ok) { fail(`git commit failed:\n  ${out}`); return false }
+    log(`  ✓ Committed: ${msg}`)
+  } else {
+    log('  ℹ No file changes since last release — tagging existing HEAD')
   }
 
-  log(`  ✓ Pushed: ${msg}`)
+  git(workDir, 'tag', '-a', '-f', `v${version}`, '-m', `secunit v${version}`)
+  return true
+}
+
+function pushToForgejo(version: string): boolean {
+  log(`\n🚀 Pushing v${version} to Forgejo`)
+
+  if (!setupGitWorkDir(FORGEJO_REMOTE, version)) return false
+  const workDir = _gitWorkDir!
+
+  // Ensure origin points to Forgejo (clone sets it; fresh init already did)
+  git(workDir, 'remote', 'set-url', 'origin', FORGEJO_REMOTE)
+
+  // Use --force only when there's no prior history to build on
+  const useForce = !_hasClonedHistory || FORCE_SNAPSHOT
+  const pushMain = useForce
+    ? git(workDir, 'push', '--force', 'origin', 'HEAD:main')
+    : git(workDir, 'push', 'origin', 'HEAD:main')
+
+  if (!pushMain.ok) { fail(`Forgejo push failed:\n  ${pushMain.out}`); return false }
+
+  const pushTag = git(workDir, 'push', '--force', 'origin', `refs/tags/v${version}`)
+  if (!pushTag.ok) { fail(`Forgejo tag push failed:\n  ${pushTag.out}`); return false }
+
+  log(`  ✓ Pushed to Forgejo`)
 
   if (GITHUB_REMOTE) {
     log(`\n🚀 Pushing v${version} to GitHub`)
-    const ghSteps: Array<[string[], boolean]> = [
-      [['remote', 'add', 'github', GITHUB_REMOTE], false], // ok to fail if already exists
-      [['remote', 'set-url', 'github', GITHUB_REMOTE], true],
-      [['push', '--force', 'github', 'HEAD:main'], true],
-      [['push', '--force', 'github', `refs/tags/v${version}`], true],
-    ]
-    for (const [args, required] of ghSteps) {
-      const { ok, out } = git(STAGE_ROOT, ...args)
-      verbose(`git ${args[0]}: ${out}`)
-      if (!ok && required) {
-        fail(`GitHub push failed (git ${args.join(' ')}):\n  ${out}`)
-        return false
-      }
-    }
+
+    const remoteExists = git(workDir, 'remote', 'get-url', 'github').ok
+    if (remoteExists) git(workDir, 'remote', 'set-url', 'github', GITHUB_REMOTE)
+    else git(workDir, 'remote', 'add', 'github', GITHUB_REMOTE)
+
+    const ghPush = useForce
+      ? git(workDir, 'push', '--force', 'github', 'HEAD:main')
+      : git(workDir, 'push', 'github', 'HEAD:main')
+
+    if (!ghPush.ok) { fail(`GitHub push failed:\n  ${ghPush.out}`); return false }
+
+    const ghTag = git(workDir, 'push', '--force', 'github', `refs/tags/v${version}`)
+    if (!ghTag.ok) { fail(`GitHub tag push failed:\n  ${ghTag.out}`); return false }
+
     log(`  ✓ Pushed to GitHub`)
   }
 
@@ -1017,7 +1111,7 @@ async function main() {
   }
 
   if (!PUSH) {
-    log('\nRun with --push to push to Forgejo.')
+    log('\nScan-only run complete. Remove --scan-only to push.')
     return
   }
 
@@ -1030,6 +1124,7 @@ async function main() {
   const pushed = pushToForgejo(version)
   if (pushed) {
     rm(STAGE_ROOT)
+    if (_gitWorkDir) rm(_gitWorkDir)
     log('\n🎉 Release complete.' + (GITHUB_REMOTE ? '' : ' Set SECUNIT_GITHUB_REMOTE to also push to GitHub.'))
     log(`   http://tower.goose-mirach.ts.net:3000/theultimate/secunit`)
   }

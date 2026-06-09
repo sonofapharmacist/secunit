@@ -66,7 +66,12 @@
       "Agent(Algorithm)",
       "Agent(pr-review-toolkit:*)",
       "Agent(statusline-setup)",
-      "mcp__*",
+      "mcp__claude_ai_Gmail__*",
+      "mcp__claude_ai_Google_Calendar__*",
+      "mcp__claude_ai_Google_Drive__*",
+      "mcp__context7__*",
+      "mcp__hermes__*",
+      "mcp__playwright__*",
       "Write(~/Projects/**)",
       "Edit(~/Projects/**)",
       "MultiEdit(~/Projects/**)",
@@ -394,6 +399,10 @@
     "SessionStart": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/SettingsIntegrityCheck.hook.ts"
+          },
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/KittyEnvPersist.hook.ts"
@@ -1170,7 +1179,7 @@
       "42 public skills across cognition, research, security, infrastructure, web, and life OS.",
       "To cure carpal tunnel syndrome: stand up from desk, leave the room, walk away never to be seen again.",
       "secunit runs Algorithm v7.1.0 — a reliability release. 146 logged failure events drove six coordinated changes.",
-      "42 public skills across cognition, research, security, infrastructure, web, and life OS.",
+      "43 public skills across cognition, research, security, infrastructure, web, and life OS.",
       "To cure carpal tunnel syndrome: stand up from desk, leave the room, walk away never to be seen again."
     ]
   },

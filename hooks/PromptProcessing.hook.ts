@@ -1012,7 +1012,7 @@ async function main() {
     try {
       // No explicit timeout here — intentional.
       // Local llama-server path uses OLLAMA_DEFAULT_TIMEOUT_MS (60s) so local inference gets patience.
-      // Claude path uses LEVEL_CONFIG.fast.defaultTimeout (15s) which is the right cap for Haiku.
+      // Claude path uses LEVEL_CONFIG.fast.defaultTimeout (20s) — bumped from 15s when your-inference-host went offline (2026-06-06) since subprocess calls run 12-16s without local Ollama.
       // Adding timeout:15000 here would silently cap llama-server too. See ISA 20260508-local-inference-routing.
       const result = await inference({
         systemPrompt: classifierPrompt,

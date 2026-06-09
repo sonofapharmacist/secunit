@@ -1,0 +1,12 @@
+{
+  "name": "@pai/hooks",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

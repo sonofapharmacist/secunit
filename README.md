@@ -31,6 +31,41 @@ a TTS provider in settings.json), and environment validation. You'll name your o
 
 ---
 
+## Why a harness at all
+
+Chatbots do nothing for you. You ask a question, they answer. That's it. The exchange
+ends at the text. Claude Code and tools like it are different in kind, not just degree:
+they work with the tools you already have installed and are allowed to use. If you
+don't know how to use one, you just ask, in line, mid-task — and it does it. The chatbot
+describes a fix. Claude Code and harnesses like secunit describe it, apply it, and tell
+you what happened when it ran — all at your say so. It's a partner in design and
+implementation, not an answering machine.
+
+Two things make the harness itself worth running on top of that:
+
+**Persistent use, the way you're most comfortable with.** A bare CLI session forgets
+everything when it closes. A harness with a proper memory system remembers — your
+projects, your conventions, what already failed, and how you like to work — so you're
+not re-establishing context every time you open a terminal. And it's shaped to fit you,
+not the other way around: your preferences, your rules, your shorthand, encoded once
+instead of re-explained per session.
+
+**It makes you the power user you'd otherwise need years to become — without the
+years.** You don't need a decade of CLI fluency or tool-by-tool expertise. The harness
+carries that. You learn as you go, by watching and asking — and you help design how it
+works for you. Not a black box. Apprenticeship, not dependency.
+
+Claude Code itself is the ADHD teenager who's great at your direction: genuinely
+capable, fast, willing to try anything — and needs a clear ask and someone paying
+attention. Left fully alone, that energy goes sideways. Pointed well, supervised well,
+it gets more done in an afternoon than you'd get done in a week solo. The harness is
+what makes "pointed well, supervised well" the default instead of the exception.
+
+Not replacing what you do — extending what you're capable of. You decide what's worth
+doing; the harness handles the mechanics of doing it. You're the one steering.
+
+---
+
 ## What's different from upstream
 
 The headline: **Algorithm v7.1.0 vs upstream's v6.3.0.**

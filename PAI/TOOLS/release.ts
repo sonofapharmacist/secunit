@@ -350,7 +350,7 @@ const PUBLIC_SKILL_COMMANDS = new Set([
   'arxiv', 'context-search', 'extract-wisdom', 'knowledge', 'private-investigator', 'research',
   'art', 'be-creative', 'ideate', 'webdesign', 'write-story',
   'agents', 'create-cli', 'create-skill', 'daemon', 'delegation', 'evals',
-  'isa', 'loop', 'migrate', 'optimize', 'pai-upgrade', 'prompting',
+  'isa', 'loop', 'migrate', 'optimize', 'pai-upgrade', 'prompting', 'tmux-cli-driver',
   'red-team', 'world-threat-model',
   'apify', 'bright-data', 'browser', 'fabric', 'interceptor',
   'bitter-pill-engineering', 'interview', 'sales', 'telos',

@@ -169,6 +169,24 @@ models handle sub-tasks at specific tiers; they are workers, not the main brain.
 Any OpenAI-compatible endpoint works. Point `inference_hosts` in `PAI_CONFIG.yaml` at your
 hardware and the routing layer handles the rest.
 
+**Backend fallback chain.** When the primary provider is rate-limited or down, `Inference.ts`
+fails over automatically instead of stalling: Anthropic → secondary cloud provider → local
+Ollama. `BackendHealth.ts` is a one-shot CLI that probes every configured backend and prints
+a clean ✅/❌ readout, so you know what's actually reachable before you're mid-session and
+something times out. `ECONNREFUSED`, `ETIMEDOUT`, and HTTP 503 are treated as usage-limit
+signals that trigger failover, not silent hangs. `DOCUMENTATION/Resilience/FaultTaxonomy.md`
+documents the failure-mode → fallback-action mapping the chain is built from.
+
+---
+
+## Pulse autopilot code review
+
+Pulse (the always-on companion process) can run a nightly, report-only code review against
+configured repos: `/code-review high` via a headless `claude -p` call, findings written to a
+JSONL queue, served over HTTP through a Pulse module. It never auto-fixes — it surfaces
+findings for you to triage in the morning, the same way you'd review a teammate's overnight
+PR comments. Configure repos and schedule in `PULSE.toml`.
+
 ---
 
 ## Feed + knowledge pipeline
@@ -259,7 +277,7 @@ Neither is required. Both extend the same surface secunit already builds on.
 
 ---
 
-## Skills (42 public)
+## Skills (43 public)
 
 Skills are composable domain units that self-activate based on task triggers — PAI's way of
 extending Claude's capabilities without bloating the system prompt.
@@ -276,7 +294,7 @@ extending Claude's capabilities without bloating the system prompt.
 
 **Infrastructure**
 `Agents` `CreateCLI` `CreateSkill` `Daemon` `Delegation` `Evals`
-`ISA` `Loop` `Migrate` `Optimize` `PAIUpgrade` `Prompting`
+`ISA` `Loop` `Migrate` `Optimize` `PAIUpgrade` `Prompting` `TmuxCliDriver`
 
 **Security**
 `RedTeam` `WorldThreatModel`

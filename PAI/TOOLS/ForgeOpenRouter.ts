@@ -24,7 +24,7 @@ const HTTP_ERROR_BODY_TIMEOUT_MS = 2000;
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 function parseArgs(argv: string[]): Args {
-  const args: Partial<Args> = { model: "openai/gpt-5.1-codex", timeoutMs: 300000, pulseUrl: "http://localhost:31337/notify", temperature: 0, maxTokens: 16000 };
+  const args: Partial<Args> = { model: "mistralai/devstral-2512", timeoutMs: 300000, pulseUrl: "http://localhost:31337/notify", temperature: 0, maxTokens: 16000 };
   const seen = new Set<string>();
   const valueFor = (flag: string, inline: string | undefined, index: number): [string, number] => {
     if (inline !== undefined) return [inline, index];

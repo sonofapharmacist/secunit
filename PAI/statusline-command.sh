@@ -216,11 +216,14 @@ ALGO_VERSION="${ALGO_VERSION:-—}"
 eval "$(jq -r '
   "current_dir=" + (.workspace.current_dir // .cwd // "." | @sh) + "\n" +
   "session_id=" + (.session_id // "" | @sh) + "\n" +
-  "model_name=" + (.model.display_name // "unknown" | @sh) + "\n" +
+  "model_name=" + (.model.display_name // .model.name // "unknown" | @sh) + "\n" +
   "cc_version_json=" + (.version // "" | @sh) + "\n" +
   "context_max=" + (.context_window.context_window_size // 200000 | tostring) + "\n" +
   "context_pct=" + (.context_window.used_percentage // 0 | tostring) + "\n" +
   "total_input=" + (.context_window.total_input_tokens // 0 | tostring) + "\n" +
+  "ctx_curr_input=" + (.context_window.current_usage.input_tokens // 0 | tostring) + "\n" +
+  "ctx_curr_cache_creation=" + (.context_window.current_usage.cache_creation_input_tokens // 0 | tostring) + "\n" +
+  "ctx_curr_cache_read=" + (.context_window.current_usage.cache_read_input_tokens // 0 | tostring) + "\n" +
   "has_native_rate_limits=" + ((.rate_limits != null) | tostring) + "\n" +
   "native_usage_5h=" + (.rate_limits.five_hour.used_percentage // .rate_limits.five_hour.utilization // 0 | tostring) + "\n" +
   "native_usage_5h_reset=" + (.rate_limits.five_hour.resets_at // "" | @sh) + "\n" +
@@ -240,9 +243,88 @@ total_input=${total_input:-0}
 has_native_rate_limits="${has_native_rate_limits:-false}"
 
 # Claude Code reserves ~16.5% of context for compaction overhead.
-# Usable context = 83.5% of window. Scale displayed % so it matches reality.
-# Without this: 83% raw looks fine but means ~1% usable remaining.
+# Usable context = 83.5% of window — scale displayed % to match reality.
+# 83% raw = 100% effective (compaction fires at 83.5%).
+# Applied in compact + normal context sections below.
 COMPACTION_USABLE=835  # 83.5% × 10 for integer math precision
+
+# ── Backend detection: context_max override (relocated here from context-display block)
+#     Sets context_max to the managed cap (e.g. 512K for MiniMax, 1M for GLM-5.2[1m])
+#     BEFORE the startup_estimate runs. Previously this block lived just above the
+#     context-display math, which made startup_estimate compute % against the JSON's
+#     default 200K — underreporting % in compact mode at session start.
+_backend_url="${ANTHROPIC_BASE_URL:-}"
+[ -z "$_backend_url" ] && _backend_url=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$SETTINGS_FILE" 2>/dev/null)
+_context_window="200K"  # default (Anthropic)
+_model_override=0
+
+case "${_backend_url:-}" in
+    *z.ai*)
+        # Claude Code reports its own model name ("Opus 4.8 (1M context)") in statusline JSON,
+        # unaware of the actual Z.ai backend. Read the real GLM model from env vars set by glm.sh.
+        _zai_model=""
+        case "${model_name,,}" in
+            *opus*)  _zai_model="${ANTHROPIC_DEFAULT_OPUS_MODEL:-${ANTHROPIC_DEFAULT_SONNET_MODEL:-glm-4.7}}" ;;
+            *haiku*) _zai_model="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-glm-4.5-air}" ;;
+            *)       _zai_model="${ANTHROPIC_DEFAULT_SONNET_MODEL:-glm-4.7}}" ;;
+        esac
+        case "${_zai_model}" in
+            *5.2*)
+                context_max=1000000
+                _context_window="1M"
+                ;;
+            *)
+                context_max=128000
+                _context_window="128K"
+                ;;
+        esac
+        _model_override=1
+        ;;
+    *minimax*|*localhost*|*127.0.0.1*)
+        # M3 managed cap = 512K regardless of native window.
+        # Native M3[1m] ceiling is 1M (verified 2026-06-18 /context 427.6K/1M), but
+        # r/opencodeCLI 2026-06-18 empirical report shows degradation past ~200K —
+        # subagents at 300-400K burn tokens and get stuck. 512K is the management
+        # discipline: visibility into remaining room + clean compaction trigger well
+        # before the quality cliff. Display matches CLAUDE_CODE_AUTO_COMPACT_WINDOW
+        # in minimax.sh. See Research/m3-220k-empirical-ceiling-2026-06-18.md.
+        # The localhost branch fires for the M3-via-OpenRouter litellm proxy on
+        # :4000 (minimax-or.sh). True local model servers (Ollama, llama-server)
+        # will fail the M3 env-var check and fall through to model-dependent.
+        if [ "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" = "claude-m3-cache-test" ] || [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            context_max=524288; _context_window="512K"
+            _model_override=1
+        else
+            _context_window="model-dependent"; _model_override=1
+        fi
+        ;;
+esac
+
+# For non-Z.ai sessions: override context when Claude Code reports wrong context_max by model name.
+# (Z.ai is already handled above with env-var-based detection.)
+if [ "$_model_override" -eq 0 ]; then
+    case "${model_name,,}" in
+        *glm-4.7*|*glm47*|*glm4.7*)
+            context_max=128000; _context_window="128K"; _model_override=1 ;;
+        *glm-5.2*|*glm52*|*glm5.2*)
+            context_max=1000000; _context_window="1M"; _model_override=1 ;;
+    esac
+fi
+
+# Only derive _context_window from context_max when no model-specific override ran.
+# When override ran, context_max is already correct — don't let bad JSON undo it.
+if [ "$_model_override" -eq 0 ] && [ -n "$context_max" ] && [ "$context_max" -gt 0 ] 2>/dev/null; then
+    if [ "$context_max" -ge 1000000 ]; then
+        _context_window="$((context_max / 1000000))M"
+    elif [ "$context_max" -ge 1000 ]; then
+        _context_window="$((context_max / 1000))K"
+    else
+        _context_window="${context_max}"
+    fi
+fi
+
+# Debug: uncomment to log model_name + resolved context to /tmp/statusline-debug.log
+# echo "$(date -Iseconds) model_name=${model_name} context_max=${context_max} _context_window=${_context_window} _model_override=${_model_override}" >> /tmp/statusline-debug.log
 
 # ── Startup context estimate (fresh calculation, no cross-session caching) ─
 # Before the first API call, Claude Code provides no token data. We estimate
@@ -925,6 +1007,39 @@ get_usage_color() {
     fi
 }
 
+# Compute display percentage.
+# Returns integer 0-100, scaled to the compaction-usable threshold (83.5% raw = 100% display).
+# Three paths, in priority order:
+#   1. current_usage (non-Anthropic override + has usage data): sum input +
+#      cache_creation + cache_read. This is the *real* context in the most
+#      recent request — total_input_tokens only counts unique non-cached
+#      tokens, so a cache-heavy session with 200K cached + 1K fresh would
+#      show 0% with total_input math. current_usage is the ground truth.
+#   2. total_input (non-Anthropic override, no current_usage yet): use as
+#      best-effort estimate. The override means Claude Code's used_percentage
+#      is relative to its assumed 200K, not the real provider window.
+#   3. Anthropic native: trust Claude Code's used_percentage directly.
+# Used by both compact and normal render paths so they always agree.
+compute_display_pct() {
+    local raw_pct _cu_total
+    if [ "$_model_override" -eq 1 ] && [ -n "$ctx_curr_input" ] 2>/dev/null; then
+        _cu_total=$(( ${ctx_curr_input:-0} + ${ctx_curr_cache_creation:-0} + ${ctx_curr_cache_read:-0} ))
+        if [ "$_cu_total" -gt 0 ] 2>/dev/null && [ "$context_max" -gt 0 ] 2>/dev/null; then
+            raw_pct=$(( _cu_total * 100 / context_max ))
+        fi
+    fi
+    if [ -z "${raw_pct:-}" ] && [ "$_model_override" -eq 1 ] && [ -n "$total_input" ] && [ "$total_input" -gt 0 ] 2>/dev/null && [ "$context_max" -gt 0 ] 2>/dev/null; then
+        raw_pct=$(( total_input * 100 / context_max ))
+    fi
+    if [ -z "${raw_pct:-}" ]; then
+        raw_pct="${context_pct%%.*}"
+        [ -z "$raw_pct" ] && raw_pct=0
+    fi
+    local display_pct=$(( raw_pct * 1000 / COMPACTION_USABLE ))
+    [ "$display_pct" -gt 100 ] && display_pct=100
+    echo "$display_pct"
+}
+
 # Render context bar - gradient progress bar using (potentially scaled) percentage
 render_context_bar() {
     local width=$1 pct=$2
@@ -940,24 +1055,24 @@ render_context_bar() {
 
     # Two threshold markers split the bar into three equal thirds.
     # Variable names kept for diff readability.
-    local pos_20=$((width / 3))          # first warning  — orange marker at 1/3
-    local pos_60=$((2 * width / 3))      # final warning  — dark-red marker at 2/3
+    local pos_third1=$((width / 3))      # first warning  — orange marker at 1/3
+    local pos_third2=$((2 * width / 3))  # final warning  — dark-red marker at 2/3
 
     # Three discrete bands keyed to the two markers — no gradient.
     # Filled buckets read off the color of the next marker the user is heading toward:
-    #   green   before pos_20  (orange marker)   — safe, no action needed
-    #   orange  pos_20..pos_60 (dark-red marker) — compact now
-    #   d.red   after pos_60                     — context degraded, compact immediately
+    #   green   before pos_third1  (orange marker)   — safe, no action needed
+    #   orange  pos_third1..pos_third2 (dark-red marker) — compact now
+    #   d.red   after pos_third2                     — context degraded, compact immediately
     for ((i=1; i<=width; i++)); do
         # Marker positions render their threshold glyph regardless of fill.
-        if [ "$i" -eq "$pos_20" ]; then
+        if [ "$i" -eq "$pos_third1" ]; then
             output="${output}\033[38;2;251;146;60m⛁${RESET}"    # orange marker
-        elif [ "$i" -eq "$pos_60" ]; then
+        elif [ "$i" -eq "$pos_third2" ]; then
             output="${output}\033[38;2;180;40;40m⛁${RESET}"     # dark-red marker
         elif [ "$i" -le "$filled" ]; then
-            if [ "$i" -lt "$pos_20" ]; then
+            if [ "$i" -lt "$pos_third1" ]; then
                 color='\033[38;2;74;222;128m'    # green band
-            elif [ "$i" -lt "$pos_60" ]; then
+            elif [ "$i" -lt "$pos_third2" ]; then
                 color='\033[38;2;251;146;60m'    # orange band
             else
                 color='\033[38;2;180;40;40m'     # dark-red band
@@ -1038,10 +1153,10 @@ fi
 if [ "$MODE" != "normal" ]; then
     # ── Compute values needed for card ──
 
-    # Context percentage — raw, matches /context command
-    _raw_pct="${context_pct%%.*}"
-    [ -z "$_raw_pct" ] && _raw_pct=0
-    _pct_color=$(get_usage_color "$_raw_pct")
+    # Context percentage — total_input-based, scaled to compaction threshold (83.5%).
+    # See compute_display_pct helper for full logic. Same source of truth as normal mode.
+    _display_pct=$(compute_display_pct)
+    _pct_color=$(get_usage_color "$_display_pct")
 
     # Git age
     _age=""
@@ -1077,7 +1192,7 @@ if [ "$MODE" != "normal" ]; then
     case "$MODE" in
         nano)
             # Line 1: branding + context
-            printf "${PAI_A}${PAI_LOGO}${RESET}  ${PAI_P}sec${PAI_A}u${PAI_I}nit${RESET} ${CTX_PRIMARY}◉${RESET}${_pct_color}${_raw_pct}%%${RESET}
+            printf "${PAI_A}${PAI_LOGO}${RESET}  ${PAI_P}sec${PAI_A}u${PAI_I}nit${RESET} ${CTX_PRIMARY}◉${RESET}${_pct_color}${_display_pct}%%${RESET}
 "
             # Line 2: git + learning
             [ "$is_git_repo" = "true" ] && printf "${GIT_PRIMARY}◈${RESET}${GIT_VALUE}${branch}${RESET} "
@@ -1086,7 +1201,7 @@ if [ "$MODE" != "normal" ]; then
             ;;
         micro)
             # Line 1: branding + context
-            printf "${PAI_A}${PAI_LOGO}${RESET}  ${PAI_P}sec${PAI_A}u${PAI_I}nit${RESET} ${CTX_PRIMARY}◉${RESET}${_pct_color}${_raw_pct}%%${RESET}
+            printf "${PAI_A}${PAI_LOGO}${RESET}  ${PAI_P}sec${PAI_A}u${PAI_I}nit${RESET} ${CTX_PRIMARY}◉${RESET}${_pct_color}${_display_pct}%%${RESET}
 "
             # Line 2: git + learning
             printf "${GIT_PRIMARY}◈${RESET}${GIT_VALUE}${branch:-—}${RESET}"
@@ -1103,8 +1218,8 @@ if [ "$MODE" != "normal" ]; then
 "
             # Line 2: context bar (compact)
             _bar_w=20
-            _bar=$(render_context_bar $_bar_w $_raw_pct)
-            printf "${CTX_PRIMARY}◉${RESET} ${_bar} ${_pct_color}${_raw_pct}%%${RESET}
+            _bar=$(render_context_bar $_bar_w $_display_pct)
+            printf "${CTX_PRIMARY}◉${RESET} ${_bar} ${_pct_color}${_display_pct}%%${RESET}
 "
             # Line 4: git
             printf "${GIT_PRIMARY}◈${RESET} ${GIT_VALUE}${branch:-—}${RESET}"
@@ -1225,29 +1340,73 @@ sep
 fi  # end _is_work_profile gate (STATE + CC banner)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# LINE 1: CONTEXT
+# LINE 1: CONTEXT (with context window detection)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# Backend context_max override is computed earlier in the script (just before startup_estimate)
+# so context_max is correct throughout. See comment at the new location for the full block.
 
 # Context display — show percentage and bar (no token counts)
 context_max="${context_max:-200000}"
 
-# Use raw percentage directly — matches /context command output
-raw_pct="${context_pct%%.*}"  # Remove decimals
-[ -z "$raw_pct" ] && raw_pct=0
-display_pct="$raw_pct"
+# Display percentage: total_input × post-override context_max, scaled to compaction threshold.
+# See compute_display_pct helper for full logic. compact-mode path uses the same helper,
+# so compact and normal always agree on the percentage.
+display_pct=$(compute_display_pct)
 
-# Color based on percentage (reuse get_usage_color for consistent thresholds)
+# Color based on effective percentage
 pct_color=$(get_usage_color "$display_pct")
+
+# Token count for the most recent request (input + cache_creation + cache_read).
+# This is the real "context in use this turn" — total_input_tokens is cumulative
+# unique non-cached tokens and underrepresents cache-heavy sessions. When
+# current_usage is missing (e.g. startup before first response), fall back to
+# total_input so the field always shows *something* sensible.
+format_tokens() {
+    local n="$1"
+    [ -z "$n" ] && { echo "—"; return; }
+    if   [ "$n" -ge 1000000 ] 2>/dev/null; then printf '%.1fM' "$(echo "$n" | awk '{printf "%.2f", $1/1000000}')" | sed 's/\.0M$/M/'
+    elif [ "$n" -ge 1000 ] 2>/dev/null;    then printf '%.1fK' "$(echo "$n" | awk '{printf "%.2f", $1/1000}')" | sed 's/\.0K$/K/'
+    else echo "${n}"
+    fi
+}
+ctx_curr_input=${ctx_curr_input:-0}
+ctx_curr_cache_creation=${ctx_curr_cache_creation:-0}
+if [ "$ctx_curr_input" -gt 0 ] || [ "$ctx_curr_cache_creation" -gt 0 ] || [ "$ctx_curr_cache_read" -gt 0 ] 2>/dev/null; then
+    # Real data: current_usage fields. Sum = full context for this turn
+    # (input + cache_creation + cache_read). Cache reads are what make prompt
+    # caching a win — show that breakdown explicitly.
+    ctx_total=$(( ctx_curr_input + ctx_curr_cache_creation + ctx_curr_cache_read ))
+    ctx_total_fmt=$(format_tokens "$ctx_total")
+    if [ "$ctx_curr_cache_read" -gt 0 ] 2>/dev/null; then
+        ctx_cache_fmt=$(format_tokens "$ctx_curr_cache_read")
+        ctx_total_display="${ctx_total_fmt} (${ctx_cache_fmt} cached)"
+    else
+        ctx_total_display="${ctx_total_fmt}"
+    fi
+elif [ "${total_input:-0}" -gt 0 ] 2>/dev/null; then
+    # Idle/refresh tick: current_usage is absent but cumulative total_input is
+    # still set from the last completed turn. Use it as a reasonable stand-in.
+    # (Less accurate than current_usage for cache-heavy sessions, but better
+    # than showing 0 or "—" mid-session.)
+    ctx_total_display="$(format_tokens "${total_input}")"
+else
+    # No data at all — startup, or right after /compact. Show dash so the
+    # field reads as "no signal yet" rather than "0 tokens used".
+    ctx_total_display="—"
+fi
 
 # Calculate bar width dynamically from actual prefix/suffix lengths
 # Prefix: "◉ CONTEXT: " = 11 visible chars
-# Suffix: " " + display_pct + "%" = 1 + len(display_pct) + 1
-_ctx_suffix_len=$(( 1 + ${#display_pct} + 1 ))
+# Suffix: " " + display_pct + "%" + " " + token_count + " " + "[window]" = 1+len(pct)+1+1+len(tok)+1+1+len(win)+1
+_ctx_token_len=${#ctx_total_display}
+_ctx_window_len=${#_context_window}
+_ctx_suffix_len=$(( 1 + ${#display_pct} + 1 + 1 + _ctx_token_len + 1 + 1 + _ctx_window_len + 1 ))
 bar_width=$(( content_width - 11 - _ctx_suffix_len ))
 [ "$bar_width" -lt 16 ] && bar_width=16
 
 bar=$(render_context_bar $bar_width $display_pct)
-printf "${CTX_SECONDARY}CONTEXT:${RESET} ${bar} ${pct_color}${display_pct}%%${RESET}\n"
+printf "${CTX_SECONDARY}CONTEXT:${RESET} ${bar} ${pct_color}${display_pct}%%${RESET} ${CTX_SECONDARY}${ctx_total_display}${RESET} ${SLATE_500}[${_context_window}]${RESET}\n"
 
 # Thin separator between context bar and files
 printf "${SLATE_600}%s${RESET}\n" "$SEP_DOT"
@@ -1302,13 +1461,41 @@ sep
 # ═══════════════════════════════════════════════════════════════════════════════
 # NOTE: usage_5h, usage_7d, usage_5h_reset, usage_7d_reset populated by PARALLEL PREFETCH
 
+# Detect non-Anthropic backend from ANTHROPIC_BASE_URL (env or settings.json)
+_backend_url="${ANTHROPIC_BASE_URL:-}"
+[ -z "$_backend_url" ] && _backend_url=$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$SETTINGS_FILE" 2>/dev/null)
+_active_backend=""
+case "${_backend_url:-}" in
+    *z.ai*)          _active_backend="GLM (Z.AI)" ;;
+    *minimax*)       _active_backend="MINIMAX" ;;
+    *openrouter*)    _active_backend="OPENROUTER" ;;
+    # localhost proxy: distinguish by what the proxy is serving. M3 proxy
+    # (minimax-or.sh) sets ANTHROPIC_DEFAULT_SONNET_MODEL=claude-m3-cache-test
+    # and OPENROUTER_API_KEY. Fall back to "LOCAL" only when neither signal
+    # matches — true local model (Ollama, llama-server, etc.).
+    *localhost*|*127.0.0.1*)
+        if [ "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" = "claude-m3-cache-test" ] || [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            _active_backend="M3 (OpenRouter)"
+        else
+            _active_backend="LOCAL"
+        fi
+        ;;
+    *anthropic.com*|'') ;;
+    *) _active_backend=$(printf '%s' "$_backend_url" | sed 's|https\?://||; s|/.*||' | tr '[:lower:]' '[:upper:]') ;;
+esac
+
+if [ -n "$_active_backend" ]; then
+    printf "${USAGE_LABEL}BACKEND:${RESET} ${USAGE_PRIMARY}${_active_backend}${RESET} ${SLATE_600}│${RESET} ${SLATE_500}quota: dashboard only${RESET}\n"
+    sep
+fi
+
 usage_5h_int=${usage_5h%%.*}
 usage_7d_int=${usage_7d%%.*}
 [ -z "$usage_5h_int" ] && usage_5h_int=0
 [ -z "$usage_7d_int" ] && usage_7d_int=0
 
-# Only show usage line if we have data (token was valid, cache fresh)
-if [ "${usage_no_data:-false}" != "true" ] && { [ "$usage_5h_int" -gt 0 ] || [ "$usage_7d_int" -gt 0 ] || [ -f "$USAGE_CACHE" ]; }; then
+# Only show Anthropic usage when on Anthropic backend and data is available
+if [ -z "${_active_backend:-}" ] && [ "${usage_no_data:-false}" != "true" ] && { [ "$usage_5h_int" -gt 0 ] || [ "$usage_7d_int" -gt 0 ] || [ -f "$USAGE_CACHE" ]; }; then
     usage_5h_color=$(get_usage_color "$usage_5h_int")
     usage_7d_color=$(get_usage_color "$usage_7d_int")
 

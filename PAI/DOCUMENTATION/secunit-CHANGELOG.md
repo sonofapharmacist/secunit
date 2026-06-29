@@ -4,6 +4,20 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.3.0] — 2026-06-29
+
+### Added
+- **Backend fallback chain:** `BackendHealth.ts` health CLI probes all configured inference backends with clean ✅/❌ output. Resilience chain Anthropic → Z.ai GLM → MiniMax M3 → Ollama autogen, with `FaultTaxonomy.md` documenting failure mode → fallback action mappings. `Inference.ts` now treats `ECONNREFUSED`/`ETIMEDOUT`/HTTP 503 as usage-limit signals so it fails over instead of hanging.
+- **Pulse nightly autopilot code review:** `NightlyCodeReview.ts` runs a report-only `/code-review high` pass against configured repos via `claude -p`, writing findings to a JSONL queue. Never auto-fixes — findings are queryable over HTTP via the Pulse `code-review` module. Wired into `pulse.ts` module loading and HTTP route dispatch.
+- **SettingsIntegrityCheck hook:** validates `settings.json` structure at session start.
+- **Incremental release commits:** `release.ts` now clones existing secunit history and commits only the diff, instead of force-pushing a single squashed snapshot each time. First release (empty remote) still falls back to a fresh `git init`. `--force-snapshot` preserves the old wipe-and-force behavior for emergencies. Forgejo and GitHub pushes share one work dir so both land the same commit.
+- **release.ts defaults to push:** dropped the old two-step "scan, then re-run with `--push`" friction — gates passing now leads straight to the confirm prompt. Use `--scan-only` to stop after the gate.
+
+### Fixed
+- Pulse `loadPulseConfig()` was silently dropping unlisted TOML sections, so `code-review.enabled` never reached `loadModules()` despite being set in `PULSE.toml`.
+- Pulse shutdown could take up to 60s (or hang indefinitely) on SIGTERM: `Bun.sleep()` ignores `AbortSignal`, so the cron heartbeat loop wasn't interruptible, and a detached Telegram supervise-retry loop kept the process alive after `main()` returned. SIGTERM now exits in ~1s.
+- Release gate hardening: `PRIVATE_SKILL_DIRS` coverage gaps, sanitizer coverage gaps, and a stale ADR stub (Kohnfelder full synthesis subsystem entry) that had been wiped back to `status: stub` by an unrelated sync commit.
+
 ## [0.2.0] — 2026-06-01
 
 ### Added

@@ -76,6 +76,7 @@ let imessageModule: any = null
 let assistantModule: any = null
 let performanceModule: any = null
 let syslogModule: any = null
+let codeReviewModule: any = null
 
 async function loadModules(config: PulseConfig) {
   if (config.voice?.enabled !== false) {
@@ -133,6 +134,14 @@ async function loadModules(config: PulseConfig) {
       log("warn", "Syslog module not available", { error: String(err) })
     }
   }
+  if (config["code-review"]?.enabled) {
+    try {
+      codeReviewModule = await import("./modules/code-review")
+      await codeReviewModule.start()
+    } catch (err) {
+      log("warn", "Code-review module not available", { error: String(err) })
+    }
+  }
 }
 
 // ── Config Types ──
@@ -148,6 +157,7 @@ interface PulseConfig {
   da?: { enabled: boolean; primary?: string; [key: string]: unknown }
   performance?: { enabled: boolean; [key: string]: unknown }
   syslog?: { enabled: boolean; port?: number; [key: string]: unknown }
+  "code-review"?: { enabled: boolean; [key: string]: unknown }
   worker?: { name: string; [key: string]: unknown }
   jobs: Array<{
     name: string
@@ -178,6 +188,7 @@ async function loadPulseConfig(): Promise<PulseConfig> {
     observability: (parsed.observability as PulseConfig["observability"]) ?? { enabled: true },
     performance: (parsed.performance as PulseConfig["performance"]) ?? { enabled: true },
     syslog: (parsed.syslog as PulseConfig["syslog"]) ?? { enabled: false, port: 5514 },
+    "code-review": (parsed["code-review"] as PulseConfig["code-review"]) ?? { enabled: false },
     hooks: (parsed.hooks as PulseConfig["hooks"]) ?? { enabled: true },
     da: (parsed.da as PulseConfig["da"]) ?? { enabled: false },
     worker: parsed.worker as PulseConfig["worker"],
@@ -192,6 +203,13 @@ const PID_PATH = join(PULSE_DIR, "state", "pulse.pid")
 const MAX_FAILURES = 3
 const MAX_SLEEP_MS = 60_000
 const MIN_SLEEP_MS = 1_000
+
+// Bun.sleep() ignores AbortSignal, so race it against this to make the heartbeat loop's
+// sleep interruptible on shutdown instead of blocking up to MAX_SLEEP_MS.
+function abortSignalPromise(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }))
+}
 
 // ── Supervisor: restart crashed subsystems without killing the process ──
 
@@ -322,10 +340,12 @@ async function main() {
   // Graceful shutdown
   let shuttingDown = false
   const isShuttingDown = () => shuttingDown
+  const shutdownAbort = new AbortController()
   const shutdown = () => {
     if (shuttingDown) return
     shuttingDown = true
     log("info", "Shutting down gracefully")
+    shutdownAbort.abort()
   }
   process.on("SIGTERM", shutdown)
   process.on("SIGINT", shutdown)
@@ -432,6 +452,13 @@ async function main() {
       return syslogModule.handleRequest(subPath, body)
     }
 
+    // Code review routes: /api/code-review/*
+    if (codeReviewModule && pathname.startsWith("/api/code-review")) {
+      const subPath = pathname.replace(/^\/api\/code-review/, "")
+      const body: Record<string, unknown> = Object.fromEntries(url.searchParams)
+      return codeReviewModule.handleRequest(subPath, body)
+    }
+
     // Observability routes: /api/*, /dashboard/*
     if (observabilityModule && (pathname.startsWith("/api/") || pathname.startsWith("/dashboard") || pathname.startsWith("/_next/") || pathname === "/favicon.ico")) {
       const resp = await observabilityModule.handleObservabilityRequest(req, pathname)
@@ -536,7 +563,8 @@ async function main() {
     const sleepMs = Math.max(MIN_SLEEP_MS, Math.min(nextDueMs - elapsed, MAX_SLEEP_MS))
 
     if (!shuttingDown) {
-      await Bun.sleep(sleepMs)
+      await Promise.race([Bun.sleep(sleepMs), abortSignalPromise(shutdownAbort.signal)])
+      if (shutdownAbort.signal.aborted) break
     }
   }
 
@@ -548,6 +576,7 @@ async function main() {
   if (syslogModule) await syslogModule.stop?.()
   await writeState(STATE_PATH, state).catch(() => {})
   log("info", "PAI Pulse stopped", { uptimeMs: Date.now() - state.startedAt })
+  process.exit(0)
 }
 
 main().catch((err) => {

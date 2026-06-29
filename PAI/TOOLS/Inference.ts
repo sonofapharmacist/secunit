@@ -636,10 +636,42 @@ const USAGE_LIMIT_PATTERNS = [
   /monthly.*limit/i,
   /exceeded.*limit/i,
   /limit.*exceeded/i,
+  /ECONNREFUSED/i,
+  /ETIMEDOUT/i,
+  /Timeout after/i,
 ];
 
 function isUsageLimitError(text: string): boolean {
   return USAGE_LIMIT_PATTERNS.some((p) => p.test(text));
+}
+
+/**
+ * Detect the user's shell fallback mode from ANTHROPIC_BASE_URL.
+ *
+ * Returns 'direct' for Anthropic-direct (no override or api.anthropic.com),
+ * 'glm' for Z.ai GLM, 'm3' for MiniMax M3, or 'other' for unrecognized
+ * overrides (preserves existing behavior for unknown URLs).
+ *
+ * When the user has `source glm.sh` or `source minimax.sh` active, the shell
+ * exports ANTHROPIC_BASE_URL to the fallback endpoint. That endpoint IS the
+ * user's chosen fallback — Claude subprocess routing must preserve ANTHROPIC_API_KEY
+ * (instead of scrubbing it for OAuth subscription billing) so `claude` CLI can
+ * use the user's API key against that endpoint. Without this, the subprocess
+ * hits api.anthropic.com, quota-fails, and triggers an Ollama fallback that
+ * times out at 60s — escalating every prompt to ALGORITHM E2 via fail-safe.
+ *
+ * Exported so PromptProcessing.hook.ts can stamp shell_mode on telemetry
+ * and emit a startup log line identifying the detected mode for debugging.
+ * Single source of truth — both `inferenceClaudeSubprocess` and `inference()`
+ * check this rather than re-implementing the URL inspection.
+ */
+export function detectShellMode(): 'direct' | 'glm' | 'm3' | 'other' {
+  const baseUrl = (process.env.ANTHROPIC_BASE_URL ?? '').toLowerCase();
+  if (!baseUrl) return 'direct';
+  if (baseUrl.includes('api.z.ai')) return 'glm';
+  if (baseUrl.includes('api.minimax.io')) return 'm3';
+  if (baseUrl.includes('api.anthropic.com')) return 'direct';
+  return 'other';
 }
 
 function getHostFromBaseUrl(baseUrl: string): string {
@@ -677,6 +709,7 @@ function logInferenceCall(
       model: result.model ?? result.fallbackModel ?? level,
       fallback_used: result.fallbackUsed ?? false,
       escalated_from_local: result.escalatedFromLocal ?? false,
+      shell_mode: detectShellMode(),
     };
     if (result.promptTokens !== undefined) base.prompt_tokens = result.promptTokens;
     if (result.completionTokens !== undefined) base.completion_tokens = result.completionTokens;
@@ -1570,8 +1603,18 @@ function inferenceClaudeSubprocess(options: InferenceOptions): Promise<Inference
     // so either one in env will silently override OAuth. Bun auto-loads ~/.claude/.env
     // into child processes, and some MCP/plugin setups export ANTHROPIC_AUTH_TOKEN —
     // either path leaks subscription work onto API-key billing. Scrub both.
-    delete env.ANTHROPIC_API_KEY;
-    delete env.ANTHROPIC_AUTH_TOKEN;
+    //
+    // EXCEPTION (2026-06-18): When shell is in M3/GLM fallback mode (`source glm.sh`
+    // or `source minimax.sh` exporting ANTHROPIC_BASE_URL to api.z.ai or api.minimax.io),
+    // the user has explicitly opted INTO API billing on that endpoint. Scrubbing the
+    // API key here would prevent `claude` CLI from using the user's fallback key —
+    // causing it to fall through to OAuth (api.anthropic.com), quota-fail, and trigger
+    // a 60s Ollama timeout that escalates every prompt to ALGORITHM E2.
+    const shellMode = detectShellMode();
+    if (shellMode !== 'glm' && shellMode !== 'm3') {
+      delete env.ANTHROPIC_API_KEY;
+      delete env.ANTHROPIC_AUTH_TOKEN;
+    }
 
     const hasImages = options.imagePaths && options.imagePaths.length > 0;
     const args = [
@@ -2146,20 +2189,33 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
   const result = await inferenceClaudeSubprocess(effectiveOptions);
 
   // Usage-limit fallback: Claude → Ollama
+  // Skipped when shell is in M3/GLM fallback mode (2026-06-18): the user has
+  // explicitly chosen M3/GLM as their fallback via `source glm.sh` /
+  // `source minimax.sh`. Routing to a broken local Ollama instead defeats that
+  // intent — the Claude subprocess call already targets the user's chosen M3/GLM
+  // endpoint when ANTHROPIC_BASE_URL is set, so its failure means M3/GLM itself
+  // is down. Failing fast with a clear error beats 60s Ollama timeout that
+  // cascades into ALGORITHM E2 fail-safe for every prompt.
+  const shellModeForFallback = detectShellMode();
+  const skipOllamaForShellMode = shellModeForFallback === 'glm' || shellModeForFallback === 'm3';
   if (!result.success && isUsageLimitError(result.error ?? '')) {
-    const { fallbackEnabled: cfgEnabled, fallbackModels, defaultModel } = await getConfig();
-    const fallbackEnabled = effectiveOptions.fallbackToOllama ?? cfgEnabled;
-    if (fallbackEnabled) {
-      if (!canUseLocal) {
-        console.error(`[Inference] Claude usage limit — Ollama fallback skipped (image attachments unsupported in Ollama text path)`);
-      } else {
-        const fallbackModel = effectiveOptions.model ?? fallbackModels[level] ?? defaultModel;
-        console.error(`[Inference] Claude usage limit — falling back to Ollama (level: ${level}, model: ${fallbackModel})`);
-        // Usage-limit: bypass warmth — cold Ollama is better than no response when Claude is quota-blocked.
-        const fallbackResult = await inferenceOllama({ ...effectiveOptions, model: fallbackModel, skipWarmthCheck: true });
-        const finalFallback = { ...fallbackResult, fallbackUsed: true, fallbackModel };
-        logInferenceCall('local', finalFallback, level, effectiveOptions.taskType);
-        return finalFallback;
+    if (skipOllamaForShellMode) {
+      console.error(`[Inference] Claude usage limit — Ollama fallback skipped (shell mode: ${shellModeForFallback}, M3/GLM IS the fallback)`);
+    } else {
+      const { fallbackEnabled: cfgEnabled, fallbackModels, defaultModel } = await getConfig();
+      const fallbackEnabled = effectiveOptions.fallbackToOllama ?? cfgEnabled;
+      if (fallbackEnabled) {
+        if (!canUseLocal) {
+          console.error(`[Inference] Claude usage limit — Ollama fallback skipped (image attachments unsupported in Ollama text path)`);
+        } else {
+          const fallbackModel = effectiveOptions.model ?? fallbackModels[level] ?? defaultModel;
+          console.error(`[Inference] Claude usage limit — falling back to Ollama (level: ${level}, model: ${fallbackModel})`);
+          // Usage-limit: bypass warmth — cold Ollama is better than no response when Claude is quota-blocked.
+          const fallbackResult = await inferenceOllama({ ...effectiveOptions, model: fallbackModel, skipWarmthCheck: true });
+          const finalFallback = { ...fallbackResult, fallbackUsed: true, fallbackModel };
+          logInferenceCall('local', finalFallback, level, effectiveOptions.taskType);
+          return finalFallback;
+        }
       }
     }
   }

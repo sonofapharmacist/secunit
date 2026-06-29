@@ -48,6 +48,9 @@ growth_schedule = "0 4 * * 0"
 [tldr]
 enabled = true
 
+[code-review]
+enabled = true
+
 # ── Cron Jobs ──
 # NOTE: Email triage, calendar reminders, morning brief, schedule review,
 # and intel brief are now Devi's responsibility (running on her Mac Mini).
@@ -58,6 +61,17 @@ name = "cost-aggregation"
 schedule = "*/15 * * * *"
 type = "script"
 command = "bun run Performance/cost-aggregator.ts"
+output = "log"
+enabled = true
+
+# Nightly autopilot code review — Forgejo repos only (pai-config, dinenasty).
+# Report-only: writes findings to MEMORY/STATE/code-review-queue.jsonl,
+# never auto-applies fixes. Skips a repo if no commits in the last 24h.
+[[job]]
+name = "nightly-code-review"
+schedule = "23 4 * * *"
+type = "script"
+command = "bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/.claude --label pai-config && bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/code/dinenasty --label dinenasty"
 output = "log"
 enabled = true
 

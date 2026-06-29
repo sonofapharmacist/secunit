@@ -63,6 +63,7 @@
       "Agent(ClaudeResearcher)",
       "Agent(CodexResearcher)",
       "Agent(Pentester)",
+      "Agent(ProofReader)",
       "Agent(Algorithm)",
       "Agent(pr-review-toolkit:*)",
       "Agent(statusline-setup)",
@@ -198,6 +199,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/ImperativeExtractor.hook.ts",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "WebFetch",
         "hooks": [
@@ -1183,7 +1194,8 @@
       "To cure carpal tunnel syndrome: stand up from desk, leave the room, walk away never to be seen again."
     ]
   },
-  "effortLevel": "high",
+  "alwaysThinkingEnabled": false,
+  "effortLevel": "xhigh",
   "awaySummaryEnabled": false,
   "plansDirectory": "Plans/",
   "skipDangerousModePermissionPrompt": true,
@@ -1263,7 +1275,7 @@
     "voiceClone": ""
   },
   "pai": {
-    "version": "0.2.0",
+    "version": "0.3.0",
     "algorithmVersion": "7.1.0",
     "repoUrl": "https://github.com/sonsofapharmacist/secunit"
   },

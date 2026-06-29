@@ -34,7 +34,38 @@ const STATE_DIR = join(MEMORY_DIR, 'STATE');
 const WORK_DIR = join(MEMORY_DIR, 'WORK');
 const OBSERVABILITY_DIR = join(MEMORY_DIR, 'OBSERVABILITY');
 const CONTEXT_LOG = join(OBSERVABILITY_DIR, 'context-sessions.jsonl');
-const CONTEXT_WINDOW_SIZE = 200_000;
+
+/**
+ * Resolve the active model's context window size for telemetry reporting.
+ *
+ * Anthropic model context windows as of 2026-06-17:
+ * - Sonnet 4.6+ = 1M standard (no beta header)
+ * - Opus 4.6+ = 1M standard (same simplification)
+ * - Haiku 4.5 = 200K (older sizing; smaller class retained tighter window)
+ *
+ * Detection: walk ANTHROPIC_DEFAULT_*_MODEL env vars for a known slug.
+ * The active model in Claude Code shell is one of these.
+ *
+ * If unknown, default to 1M (current Anthropic-native standard) — better
+ * to under-report context_pct than to falsely flag early compaction.
+ */
+function resolveContextWindowSize(): number {
+  const candidates = [
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+    process.env.ANTHROPIC_SMALL_FAST_MODEL,
+  ].filter(Boolean) as string[];
+
+  for (const slug of candidates) {
+    const lower = slug.toLowerCase();
+    if (lower.includes('haiku')) return 200_000;
+    if (lower.includes('sonnet') || lower.includes('opus')) return 1_000_000;
+  }
+  return 1_000_000; // Safe default for current Anthropic-native frontier
+}
+
+const CONTEXT_WINDOW_SIZE = resolveContextWindowSize();
 
 interface HookInput {
   session_id?: string;
@@ -188,6 +219,29 @@ async function main() {
     sections.push('');
     sections.push(`## Session`);
     sections.push(`ID: ${input.session_id}`);
+  }
+
+  // Section 4: Imperatives (ImperativeExtractor state, if present)
+  if (input.session_id) {
+    const imperativesPath = join(STATE_DIR, `imperatives-${input.session_id}.json`);
+    try {
+      if (existsSync(imperativesPath)) {
+        const impState = JSON.parse(readFileSync(imperativesPath, 'utf-8'));
+        if (impState?.imperatives && impState.imperatives.length > 0) {
+          sections.push('');
+          sections.push('## Imperatives (survive compaction)');
+          sections.push('*These instructions were issued earlier in this session and must still be honored:*');
+          sections.push('');
+          for (const imp of impState.imperatives) {
+            const countSuffix = imp.count > 1 ? ` (×${imp.count})` : '';
+            sections.push(`- [\`${imp.kind}\`] ${imp.text}${countSuffix}`);
+          }
+        }
+      }
+    } catch (err) {
+      // Silent fail — imperatives are best-effort, never block compaction
+      console.error(`[PreCompact] Imperatives read error: ${err}`);
+    }
   }
 
   // Only output if we have meaningful context

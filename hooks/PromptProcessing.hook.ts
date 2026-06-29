@@ -27,7 +27,7 @@
 import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmdirSync, renameSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 
-import { inference } from '../PAI/TOOLS/Inference';
+import { inference, detectShellMode } from '../PAI/TOOLS/Inference';
 import { getIdentity, getPrincipal } from './lib/identity';
 import { isValidWorkingTitle, getWorkingFallback, trimToValidTitle } from './lib/output-validators';
 import { setTabState, getSessionOneWord } from './lib/tab-setter';
@@ -68,7 +68,7 @@ function emitAdditionalContext(mode: Mode, tier: number | null, reason: string, 
   const base = (mode === 'ALGORITHM' && tier !== null)
     ? `MODE: ALGORITHM | TIER: E${tier} | REASON: ${reason} | SOURCE: classifier`
     : `MODE: ${mode} | REASON: ${reason} | SOURCE: classifier`;
-  const additionalContext = `${base} | MODEL: ${model}`;
+  const additionalContext = `${base} | MODEL: ${model} | SHELL_MODE: ${detectShellMode()}`;
   console.log(JSON.stringify({
     mode,
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
@@ -838,6 +838,7 @@ async function main() {
     const input = await readStdinWithTimeout();
     if (!input.trim()) process.exit(0);
     console.error('[PromptProcessing] Hook started');
+    console.error(`[PromptProcessing] Shell mode: ${detectShellMode()} (ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL ?? '<unset>'})`);
     const data: HookInput = JSON.parse(input);
     const prompt = data.prompt || data.user_prompt || '';
     const sessionId = data.session_id;
@@ -1107,6 +1108,7 @@ async function main() {
           latency_ms: Date.now() - inferenceStart,
           model_selected: selectedModel,
           classifier_prompt_tokens: classifierPromptTokens,
+          shell_mode: detectShellMode(),
         });
 
       } else {
@@ -1129,6 +1131,7 @@ async function main() {
           latency_ms: Date.now() - inferenceStart,
           model_selected: 'sonnet',
           classifier_prompt_tokens: classifierPromptTokens,
+          shell_mode: detectShellMode(),
         });
       }
     } catch (err) {

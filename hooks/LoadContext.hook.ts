@@ -428,6 +428,20 @@ async function checkActiveProgress(paiDir: string): Promise<string | null> {
 
 async function main() {
   try {
+    // SessionStart hooks receive session_id via stdin JSON, not an env var —
+    // Claude Code never sets CLAUDE_SESSION_ID/SESSION_ID. Read stdin first so
+    // standing-instructions lookup below has a real session id to key off of.
+    let stdinSessionId: string | undefined;
+    try {
+      const stdin = await Bun.stdin.text();
+      if (stdin.trim()) {
+        const parsed = JSON.parse(stdin);
+        stdinSessionId = parsed?.session_id;
+      }
+    } catch {
+      // No/invalid stdin — fall through, standing instructions will be skipped
+    }
+
     // Subagents don't need dynamic context injection
     const claudeProjectDir = process.env.CLAUDE_PROJECT_DIR || '';
     const isSubagent = claudeProjectDir.includes('/.claude/Agents/') ||
@@ -451,6 +465,35 @@ async function main() {
     console.error('✅ Loaded settings.json');
 
     // v5.0: Static startup files now loaded via @imports in CLAUDE.md (native Claude Code mechanism)
+
+    // Load standing-instructions from ImperativeExtractor state (if present).
+    // These are imperatives the user issued earlier that must be honored
+    // even after compaction has dropped them from active context.
+    let standingInstructions = '';
+    try {
+      const sessionId = stdinSessionId || process.env.CLAUDE_SESSION_ID || process.env.SESSION_ID;
+      if (sessionId) {
+        const imperativesPath = join(paiDir, 'MEMORY', 'STATE', `imperatives-${sessionId}.json`);
+        if (existsSync(imperativesPath)) {
+          const impState = JSON.parse(readFileSync(imperativesPath, 'utf-8'));
+          if (impState?.imperatives && impState.imperatives.length > 0) {
+            const lines = impState.imperatives.map((imp: any) => {
+              const countSuffix = imp.count > 1 ? ` (×${imp.count})` : '';
+              return `- [\`${imp.kind}\`] ${imp.text}${countSuffix}`;
+            });
+            standingInstructions = `## Standing Instructions (survived compaction)
+
+These imperatives were issued earlier in this session and must still be honored:
+
+${lines.join('\n')}
+`;
+            console.error(`📌 Loaded ${impState.imperatives.length} standing instructions from imperative state`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`⚠️ Failed to load standing instructions: ${err}`);
+    }
 
     // Load relationship context (lightweight summary)
     let relationshipContext: string | null = null;
@@ -494,10 +537,10 @@ async function main() {
     }
 
     // Inject dynamic context if we have any
-    if (relationshipContext || learningContext) {
+    if (relationshipContext || learningContext || standingInstructions) {
       const message = `<system-reminder>
 PAI Dynamic Context (Auto-loaded at Session Start)
-${relationshipContext ?? ''}${learningContext ? '\n---\n' + learningContext : ''}
+${standingInstructions ? '\n' + standingInstructions + '---\n' : ''}${relationshipContext ?? ''}${learningContext ? '\n---\n' + learningContext : ''}
 ---
 Dynamic context loaded. Constitutional rules are in the system prompt (PAI/PAI_SYSTEM_PROMPT.md). Operational procedures are in CLAUDE.md.
 </system-reminder>`;

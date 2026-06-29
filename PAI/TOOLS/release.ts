@@ -242,6 +242,10 @@ function strip() {
   rm(join(STAGE_ROOT, 'hooks', 'node_modules'))
   log('  ✓ hooks/node_modules/ stripped')
 
+  // --- TOOLS/LiteLLM/ → strip (local configs carry live provider API keys) --
+  rm(join(pai, 'TOOLS', 'LiteLLM'))
+  log('  ✓ TOOLS/LiteLLM/ stripped (local-only, carries live API keys)')
+
   // --- PULSE/state/ → strip (runtime data with personal info) --
   rm(join(pai, 'PULSE', 'state'))
   rm(join(pai, 'Pulse', 'state'))  // lowercase alias
@@ -640,6 +644,26 @@ const SANITIZATIONS: Sanitization[] = [
       [/\bubullm\b/gi, 'your-inference-host'],
     ],
   },
+  {
+    rel: 'PAI/PULSE/PULSE.toml',
+    replacements: [[/\/home\/realuser\//g, '${HOME}/']],
+  },
+  {
+    rel: 'PAI/TOOLS/NightlyCodeReview.ts',
+    replacements: [[/\/home\/realuser\//g, '${HOME}/']],
+  },
+  {
+    rel: 'PAI/TOOLS/FreeTierEvals/unified_bench.ts',
+    replacements: [[/\bubullm\b/gi, 'your-inference-host']],
+  },
+  {
+    rel: 'PAI/TOOLS/BackendHealth.ts',
+    replacements: [[/autogen\.esilabs\.com/g, 'your-ollama-host.example.com']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Resilience/FaultTaxonomy.md',
+    replacements: [[/autogen\.esilabs\.com/g, 'your-ollama-host.example.com']],
+  },
 ]
 
 function sanitize() {
@@ -1013,20 +1037,38 @@ function generateSBOM(version: string): boolean {
      '--type', 'npm', '--spec-version', '1.5'],
     { encoding: 'utf-8', stdio: 'pipe' }
   )
-  if (r.status !== 0 || !existsSync(outFile)) {
+  // cdxgen 12.7.0 can crash in its post-generation summary-table printer
+  // (TypeError on c.evidence?.identity?.some) after the SBOM file is already
+  // written correctly. Non-zero exit doesn't mean the file is bad — verify
+  // the file itself rather than trusting the process exit code.
+  if (!existsSync(outFile)) {
     log('  ⚠ SBOM generation failed — release continues without sbom.json')
     if (VERBOSE && r.stderr?.trim()) log(`  [v] ${r.stderr.trim()}`)
     return false
   }
+  let sbom: any
   try {
-    const sbom = JSON.parse(readFileSync(outFile, 'utf-8'))
-    if (sbom.metadata?.component) {
-      sbom.metadata.component.name = 'secunit'
-      sbom.metadata.component.version = version
-    }
-    writeFileSync(outFile, JSON.stringify(sbom, null, 2), 'utf-8')
-  } catch { /* leave as-is if json parse fails */ }
-  log('  ✓ SBOM: sbom.json (CycloneDX 1.5)')
+    sbom = JSON.parse(readFileSync(outFile, 'utf-8'))
+  } catch {
+    log('  ⚠ SBOM file is not valid JSON — release continues without sbom.json')
+    rm(outFile)
+    return false
+  }
+  if (!Array.isArray(sbom.components) || sbom.components.length === 0) {
+    log('  ⚠ SBOM has no components — release continues without sbom.json')
+    rm(outFile)
+    return false
+  }
+  if (sbom.metadata?.component) {
+    sbom.metadata.component.name = 'secunit'
+    sbom.metadata.component.version = version
+  }
+  writeFileSync(outFile, JSON.stringify(sbom, null, 2), 'utf-8')
+  if (r.status !== 0) {
+    log(`  ✓ SBOM: sbom.json (CycloneDX 1.5, ${sbom.components.length} components) — cdxgen exited ${r.status} on summary-table printing, file verified valid`)
+  } else {
+    log(`  ✓ SBOM: sbom.json (CycloneDX 1.5, ${sbom.components.length} components)`)
+  }
   return true
 }
 

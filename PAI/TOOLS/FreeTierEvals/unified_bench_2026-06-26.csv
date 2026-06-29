@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status
+qwen36_35b_a3b,llamacpp,2,8,16,10,34,53,692.9,complete

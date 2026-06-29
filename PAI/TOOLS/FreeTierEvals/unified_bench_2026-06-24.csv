@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status
+qwen3_30b_a3b_udq4kxl,llamacpp,2,8,16,18,42,53,141.6,complete

@@ -57,6 +57,8 @@ interface ModelSpec {
 const MODELS: ModelSpec[] = [
   // Tier 0 frontier (Anthropic family)
   { key: "sonnet", name: "Claude Sonnet 4.6", model: "claude-sonnet-4-6", provider: "anthropic", anthropicCompat: false, fenceStrip: false, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/anthropic", tier: 0 },
+  { key: "sonnet5", name: "Claude Sonnet 5", model: "claude-sonnet-5", provider: "anthropic", anthropicCompat: false, fenceStrip: false, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/anthropic", tier: 0 },
+  { key: "haiku", name: "Claude Haiku 4.5", model: "claude-haiku-4-5-20251001", provider: "anthropic", anthropicCompat: false, fenceStrip: false, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/anthropic", tier: 1 },
   { key: "opus", name: "Claude Opus 4.8", model: "claude-opus-4-8", provider: "anthropic", anthropicCompat: false, fenceStrip: false, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/anthropic", tier: 0 },
   { key: "m3", name: "MiniMax M3 (512K)", model: "MiniMax-M3", provider: "minimax", anthropicCompat: true, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/minimax", tier: 0 },
   { key: "glm52-1m", name: "Z.ai GLM-5.2 (1M ctx, 3x quota — emergency-only)", model: "glm-5.2", provider: "zai", anthropicCompat: true, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 1, passageKey: "api/glm", tier: 0 },
@@ -161,9 +163,9 @@ async function runPythonScript(script: string, args: string[]): Promise<{ stdout
 function resolveScriptForT(model: ModelSpec): string {
   if (model.provider === "llamacpp") return "llamacpp_eval.py";
   if (model.provider === "mistral") return "mistral_eval.py";
-  if (model.anthropicCompat) {
+  if (model.provider === "anthropic" || model.anthropicCompat) {
     // Use the work-dir copy of anthropic_compat_eval.py
-    return "../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/anthropic_compat_eval.py";
+    return "../../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/anthropic_compat_eval.py";
   }
   if (model.provider === "nim") return "nim_eval.py"; // nim has T1-T9 in its suite
   return "mistral_eval.py"; // fallback
@@ -172,21 +174,21 @@ function resolveScriptForT(model: ModelSpec): string {
 function resolveScriptForR(model: ModelSpec): string {
   if (model.provider === "llamacpp") return "llamacpp_eval.py";
   if (model.provider === "nim") return "reasoning_eval.py";
-  if (model.anthropicCompat) {
-    return "../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/anthropic_compat_reasoning_probe.py";
+  if (model.provider === "anthropic" || model.anthropicCompat) {
+    return "../../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/anthropic_compat_reasoning_probe.py";
   }
   if (model.provider === "mistral") {
-    return "../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/mistral_reasoning_probe.py";
+    return "../../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/mistral_reasoning_probe.py";
   }
   if (model.provider === "cohere") {
-    return "../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/cohere_reasoning_probe.py";
+    return "../../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/cohere_reasoning_probe.py";
   }
   return "reasoning_eval.py";
 }
 
 function resolveScriptForC(model: ModelSpec): string {
   if (model.provider === "llamacpp") return "llamacpp_eval.py";
-  return "../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/coding_battery.py";
+  return "../../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests/coding_battery.py";
 }
 
 function targetKeyFor(model: ModelSpec): string {

@@ -1126,7 +1126,7 @@ MODELS = {
         "model": "nemotron-nano:9b-v2",
         "max_tokens": 4096,
         "temperature": 0,
-        "is_reasoning": False,
+        "is_reasoning": True,
         "fence_strip": True,
         "type_filter": False,
     },
@@ -1136,6 +1136,33 @@ MODELS = {
         "max_tokens": 4096,
         "temperature": 0,
         # Qwen family; if reasoning_content leaks at T1 probe, flip to True.
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    # Added 2026-06-30 — local reproduction of the NIM 43/53 cloud result.
+    # Nemotron-3-Nano-Omni-30B-A3B-Reasoning, IQ4_NL, nemotron_h_moe (Mamba2-hybrid)
+    # arch — VERIFIED to load + generate on V100 sm_70 this date. Reasoning model,
+    # so temp=1 + is_reasoning True (16K token floor) + fence_strip, matching the
+    # cloud run that scored 43/53. GGUF is text-head only (Omni multimodal encoders
+    # don't load), so R5 reproduction is NOT guaranteed — see reference memory.
+    "nemotron3_30b_a3b_r": {
+        "name": "Nemotron-3-Nano-Omni-30B-A3B-R (ubullm, IQ4_NL, reasoning)",
+        "model": "nemotron30b-a3b-r",
+        "max_tokens": 8192,
+        "temperature": 1,
+        "is_reasoning": True,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    # Added 2026-06-30 — gap-fill batch. mistral-small-3.1-24b is the last on-disk
+    # model never to get a full 53-pt run (only throughput-benched historically).
+    # Dense 24B; non-reasoning. temp=0, fence_strip on. type_filter False (dense).
+    "mistral_small31_24b": {
+        "name": "Mistral-Small-3.1-24B (ubullm, Q4_K_M)",
+        "model": "mistral-sm31:24b",
+        "max_tokens": 4096,
+        "temperature": 0,
         "is_reasoning": False,
         "fence_strip": True,
         "type_filter": False,

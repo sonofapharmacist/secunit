@@ -96,19 +96,9 @@ For each finding (release notes, GitHub commits, doc updates), extract specific 
 Check `~/.claude/PAI/USER/SKILLCUSTOMIZATIONS/PAIUpgrade/` for additional source definitions beyond YouTube and GitHub trending. If sources exist, check them for updates. Return findings, or empty list with note "No custom sources configured".
 
 **Agent 4 — GitHub Trending**
-1. Load `github_trending` config from `~/.claude/PAI/USER/SKILLCUSTOMIZATIONS/PAIUpgrade/user-sources.json`. If `enabled: false` or missing, return `{ github_trending: false, note: "disabled or not configured" }`.
-2. `LOOKBACK_DATE = today - lookback_days` (default 14).
-3. For each `query` in `github_trending.queries`:
-   ```bash
-   gh api 'search/repositories?q=QUERY+created:>LOOKBACK_DATE+stars:>MIN_STARS&sort=SORT&order=desc&per_page=RESULTS' \
-     --jq '.items[] | {name, stars, description, url, topics, created, language}'
-   ```
-4. Dedup against `../State/github-trending.json`.
-5. For each NEW repo, read README (`gh api 'repos/OWNER/REPO/readme' --jq '.content' | base64 -d | head -500`). Assess PAI relevance. Extract specific techniques/architectures/patterns. Skip forks, low-quality, irrelevant.
-6. Save updated seen-list to `../State/github-trending.json`.
-7. Focus on INSPIRATION (architectural decisions, novel approaches), not just repo names.
+Run: `bun ~/.claude/skills/PAIUpgrade/Tools/GithubTrending.ts`
 
-Return within 90s; reduce per_page to 3 if slow.
+For each repo in the JSON output (`repos` array): assess PAI relevance, extract specific techniques/architectures/patterns. Skip forks, low-quality, or irrelevant repos. Focus on INSPIRATION (architectural decisions, novel approaches), not just repo names. Return within 90s.
 
 ### Step 2a: Claude Code Freshness Check (parallel with Thread 2)
 
@@ -122,16 +112,7 @@ Output feeds Step 5 (Filter and Score) as source type `Claude Code Guide` and is
 
 Spawn 1 parallel agent (`subagent_type=general-purpose`):
 
-Read `~/.claude/PAI/MEMORY/LEARNING/REFLECTIONS/algorithm-reflections.jsonl`. Full methodology: `Workflows/MineReflections.md`. Quick summary:
-1. Parse each line as JSON.
-2. Prioritize entries with `implied_sentiment <= 5`, `within_budget: false`, or `criteria_failed > 0`.
-3. Cluster Q2 answers (algorithm improvements) by similarity.
-4. Cluster Q1 answers (execution patterns).
-5. Themes with 2+ occurrences (or 1 if sentiment ≤ 4) become upgrade candidates.
-
-Return: entries analyzed (N), date range, list of upgrade candidates (theme, frequency, signal HIGH/MEDIUM/LOW, root cause, proposed fix, target files, supporting Q2 quotes), execution warnings (recurring Q1 mistakes), aspirational insights (Q3 patterns).
-
-If file is missing or empty: `{ entries_analyzed: 0, note: "No reflections found yet — they accumulate after Standard+ Algorithm runs" }`. Return within 60s.
+Read `Workflows/MineReflections.md` and apply the full methodology to `~/.claude/PAI/MEMORY/LEARNING/REFLECTIONS/algorithm-reflections.jsonl`. Return the output format specified in that workflow. Return within 60s.
 
 ### Step 3: Wait and Collect
 
@@ -219,7 +200,23 @@ Output:
 
 If none pass: "No registry updates needed this cycle."
 
-### Step 9: Update State
+### Step 9: Write Report to File
+
+Write the full report output to a dated file:
+
+```bash
+REPORT_DIR="$HOME/.claude/PAI/MEMORY/WORK/paiupgrade-$(date +%Y-%m-%d)"
+mkdir -p "$REPORT_DIR"
+# Write the complete report markdown (all sections) to:
+# $REPORT_DIR/report.md
+```
+
+The report file must contain all sections in canonical output order:
+Discoveries → Recommendations → Technique Details → Internal Reflections → Summary → Skipped → Sources Processed → Registry Update Proposals → Memory Maintenance.
+
+After writing, output the path: `📄 Report saved: $REPORT_DIR/report.md`
+
+### Step 10: Update State
 
 - `State/last-check.json` — updated by Anthropic.ts.
 - `State/youtube-videos.json` — add newly processed video IDs.

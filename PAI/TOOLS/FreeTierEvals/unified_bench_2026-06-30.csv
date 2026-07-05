@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status
+sonnet5,anthropic,0,9,11,14,34,53,257.0,complete

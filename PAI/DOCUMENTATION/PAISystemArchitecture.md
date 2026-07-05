@@ -8,7 +8,7 @@ PAI targets **AS3** on the [PAI Maturity Model](https://example.com/blog/persona
 
 **Canonical thesis:** `PAI/DOCUMENTATION/LifeOs/LifeOsThesis.md` — read this first when any framing question comes up. This architecture doc describes *how* the OS is built; the thesis doc describes *what* the OS is for.
 
-**Version:** PAI 5.0.0 | Algorithm v7.0.0 | Memory v7.6
+**Version:** PAI 5.0.0 | Algorithm v7.1.0 | Memory v7.6
 
 ---
 
@@ -179,11 +179,11 @@ Each subsystem has its own detailed documentation. This section provides orienta
 
 Transitions from CURRENT STATE to IDEAL STATE via verifiable Ideal State Criteria (ISC): Observe -> Think -> Plan -> Build -> Execute -> Verify -> Learn. Supports three execution modes: interactive (human-in-the-loop), loop (autonomous), and optimize (hill-climbing against a metric). The Algorithm is versioned independently and self-improves through accumulated learning signals.
 
-- **Version:** v7.0.0
-- **Location:** `PAI/ALGORITHM/` (canonical pointer: `LATEST` → `v7.0.0.md`)
+- **Version:** v7.1.0
+- **Location:** `PAI/ALGORITHM/` (canonical pointer: `LATEST` → `v7.1.0.md`)
 - **CLI:** `bun PAI/TOOLS/algorithm.ts`
 - **Full doc:** `PAI/DOCUMENTATION/Algorithm/AlgorithmSystem.md`
-- **Doctrine highlights (v7.0.0):** twelve-section ISA in fixed order; fail-safe routes to E2 (not E3); E3 thinking floor ≥1 HARD; closed enumeration of thinking capabilities; Capability-Name Audit Gate (phantom names = CRITICAL FAILURE); ID-stability rule (ISC IDs never re-number on edit); Cato cross-vendor audit MANDATORY at E4/E5 in VERIFY (Rule 2a); violations_self_reported field mandatory in algorithm-reflections.jsonl
+- **Doctrine highlights (v7.1.0):** twelve-section ISA in fixed order; fail-safe routes to E2 (not E3); E3 thinking floor ≥1 HARD; closed enumeration of thinking capabilities; Capability-Name Audit Gate (phantom names = CRITICAL FAILURE); ID-stability rule (ISC IDs never re-number on edit); Cato cross-vendor audit MANDATORY at E4/E5 in VERIFY (Rule 2a); violations_self_reported field mandatory in algorithm-reflections.jsonl; stub surface format (`♻︎ PAI v7.1.0 → [task]`); no-narration context recovery; phase-completion checklist in VERIFY
 
 ### Skill System
 
@@ -444,7 +444,7 @@ System file inventory by pipeline. When you modify a file, trace its pipeline to
 | Pipeline | Key Files |
 |----------|-----------|
 | **Security** | `hooks/SecurityPipeline.hook.ts`, `hooks/security/pipeline.ts`, `hooks/security/inspectors/{Pattern,Egress,Rules,Prompt,Injection}Inspector.ts`, `USER/SECURITY/PATTERNS.yaml` |
-| **Algorithm** | `Algorithm/LATEST` → `Algorithm/v{VERSION}.md` (currently v7.0.0), `Algorithm/capabilities.md`, `Algorithm/mode-detection.md`, `hooks/ISASync.hook.ts` → `MEMORY/WORK/{slug}/ISA.md`, `skills/ISA/` (canonical Scaffold/Append/Reconcile workflows) |
+| **Algorithm** | `Algorithm/LATEST` → `Algorithm/v{VERSION}.md` (currently v7.1.0), `Algorithm/capabilities.md`, `Algorithm/mode-detection.md`, `hooks/ISASync.hook.ts` → `MEMORY/WORK/{slug}/ISA.md`, `skills/ISA/` (canonical Scaffold/Append/Reconcile workflows) |
 | **Memory** | `hooks/WorkCompletionLearning.hook.ts`, `hooks/SatisfactionCapture.hook.ts`, `hooks/RelationshipMemory.hook.ts`, `Tools/KnowledgeHarvester.ts` → `MEMORY/KNOWLEDGE/`, `MEMORY/LEARNING/`; `Tools/SessionHarvester.ts --mine` → `KNOWLEDGE/_harvest-queue/`; `Tools/MemoryRetriever.ts` (BM25 retrieval), `Tools/KnowledgeGraph.ts` (graph navigation) — read-only |
 | **Hooks** | `hooks/*.hook.ts`, `hooks/handlers/*.ts`, `hooks/lib/*.ts`, `settings.json` |
 | **Observability** | `hooks/ToolActivityTracker.hook.ts`, `hooks/ToolFailureTracker.hook.ts`, `hooks/lib/observability-transport.ts` → `MEMORY/OBSERVABILITY/*.jsonl` |

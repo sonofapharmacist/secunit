@@ -17,6 +17,7 @@
 import { readHookInput, parseTranscriptFromInput } from './lib/hook-io';
 import { handleDocCrossRefIntegrity } from './handlers/DocCrossRefIntegrity';
 import { handleRebuildArchSummary } from './handlers/RebuildArchSummary';
+import { handleAlgorithmVersionAudit } from './handlers/AlgorithmVersionAudit';
 
 async function main() {
   const input = await readHookInput();
@@ -34,6 +35,12 @@ async function main() {
     await handleRebuildArchSummary();
   } catch (err) {
     console.error('[DocIntegrity] Arch-summary handler failed:', err);
+  }
+
+  try {
+    await handleAlgorithmVersionAudit(input.transcript_path);
+  } catch (err) {
+    console.error('[DocIntegrity] Algorithm version audit failed:', err);
   }
 
   process.exit(0);

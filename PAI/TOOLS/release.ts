@@ -307,6 +307,24 @@ function strip() {
     log('  ⚠ PAI/install.sh not found — no root installer')
   }
 
+  // --- PAI/backends/*.sh → promote to repo root -----------------
+  // Backend-switch scripts (source, don't execute) for the resilience chain:
+  // minimax.sh / glm.sh (cloud fallbacks) + offline.sh / offline-off.sh (local Ollama)
+  const backendsSrc = join(pai, 'backends')
+  if (existsSync(backendsSrc)) {
+    let backendCount = 0
+    for (const entry of readdirSync(backendsSrc)) {
+      if (!entry.endsWith('.sh')) continue
+      const dest = join(STAGE_ROOT, entry)
+      writeFileSync(dest, readFileSync(join(backendsSrc, entry), 'utf-8'), 'utf-8')
+      chmodSync(dest, 0o755)
+      backendCount++
+    }
+    log(`  ✓ PAI/backends/*.sh → repo root (${backendCount} scripts, +x)`)
+  } else {
+    log('  ⚠ PAI/backends/ not found — no backend-switch scripts')
+  }
+
   // --- GitHub/ → .github/ at repo root -------------------------
   const githubSrc = join(pai, 'GitHub')
   if (existsSync(githubSrc)) {
@@ -663,6 +681,13 @@ const SANITIZATIONS: Sanitization[] = [
   {
     rel: 'PAI/DOCUMENTATION/Resilience/FaultTaxonomy.md',
     replacements: [[/autogen\.esilabs\.com/g, 'your-ollama-host.example.com']],
+  },
+  {
+    rel: 'PAI/PROFILES/work/CLAUDE.md',
+    replacements: [
+      [/gps-cyber\.com/g, 'your-domain.example.com'],
+      [/-home-realuser/g, '-home-<username>'],
+    ],
   },
 ]
 

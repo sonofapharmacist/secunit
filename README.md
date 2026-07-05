@@ -214,6 +214,52 @@ documents the failure-mode → fallback-action mapping the chain is built from.
 
 ---
 
+## Backend switching — when Claude Code itself needs a different endpoint
+
+`Inference.ts` fallback (above) covers tool- and subagent-level calls. Sometimes you need
+Claude Code's own CLI session — the orchestrator, not just a subtask — to run against a
+different Anthropic-compatible endpoint: a cloud provider when Anthropic is rate-limited, or a
+local model when you're offline entirely. Four small scripts at the repo root handle this by
+setting/unsetting the `ANTHROPIC_*` env vars Claude Code reads at startup. **Source them, don't
+execute them** — they need to modify your current shell's environment.
+
+| Script | Switches to | Notes |
+|---|---|---|
+| `glm.sh` | Z.ai GLM (cloud) | Opus-level GLM-5.2 for Sonnet/Opus slots, GLM-4.5-air for Haiku |
+| `minimax.sh` | MiniMax M3 (cloud) | Secondary cloud fallback; all model slots map to MiniMax-M3 |
+| `offline.sh` | Local Ollama | Routes to a local/LAN inference host; works fully offline |
+| `offline-off.sh` | Anthropic direct | Unsets every override, restores default routing |
+
+```bash
+# Switch to a cloud fallback when Anthropic is rate-limited
+source ~/.claude/glm.sh        # or: source ~/.claude/minimax.sh
+
+# Go fully local (e.g. Ollama running on this machine or a LAN host)
+export PAI_OFFLINE_HOST=127.0.0.1   # or a Tailscale/LAN IP of a dedicated inference box
+source ~/.claude/offline.sh
+
+# Revert to Anthropic direct
+source ~/.claude/offline-off.sh
+```
+
+**Credentials.** `glm.sh` and `minimax.sh` read their API keys via `passage show api/glm` /
+`passage show api/minimax` if [passage](https://github.com/FiloSottile/passage) (Filippo
+Valsorda's age-backed password manager) is installed; otherwise they fall back to the
+`GLM_API_KEY` / `MINIMAX_API_KEY` env vars. Set whichever you use before sourcing the script.
+Both scripts guard against an empty key and print the fix instead of starting Claude Code
+against a backend with no credentials.
+
+**Offline mode** (`offline.sh`) expects an Ollama instance reachable at `$PAI_OFFLINE_HOST` on
+port 11435, serving a tool-use-capable model (Claude Code's tool-call grammar needs a model that
+actually supports function calling — not every small local model does). `PAI_OFFLINE_HOST`
+defaults to `127.0.0.1`. `offline.sh` documents the same fallback tiers `Inference.ts` uses
+(Nous, OpenRouter, direct Ollama) for when you need inference outside the Claude Code shell too.
+
+Each script prints what it just changed and how to reverse it — check the terminal output after
+sourcing before you start relying on the new backend.
+
+---
+
 ## Pulse autopilot code review
 
 Pulse (the always-on companion process) can run a nightly, report-only code review against

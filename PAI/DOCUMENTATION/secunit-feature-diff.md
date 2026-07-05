@@ -56,10 +56,14 @@ A complete local-first inference layer built over five ISA sessions (P1–P5, Ma
 | `BenchmarkLocalModels.ts` | Benchmarks throughput (tok/s) across all configured hosts |
 | `LocalInferenceEval.ts` | Full evaluation harness for local model comparison |
 | `InferenceStats.ts` | Aggregate inference statistics CLI |
+| `glm.sh` / `minimax.sh` | Source to switch Claude Code's own session (not just subtask calls) to Z.ai GLM or MiniMax M3 |
+| `offline.sh` / `offline-off.sh` | Source to route Claude Code to a local Ollama host, or revert to Anthropic direct |
 
 **Why this matters publicly:** users can configure PAI to use local models (Ollama, llama.cpp,
 any OpenAI-compatible endpoint) with intelligent fallback. The routing layer handles tier
-selection, warmth awareness, and Claude fallback automatically.
+selection, warmth awareness, and Claude fallback automatically. The `glm.sh` / `minimax.sh` /
+`offline.sh` scripts extend this to the orchestrator itself — switching what Claude Code talks
+to at the CLI level, not just what subtasks route through.
 
 ---
 

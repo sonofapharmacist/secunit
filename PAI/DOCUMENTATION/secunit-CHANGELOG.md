@@ -4,6 +4,16 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.4.0] — 2026-07-05
+
+### Added
+- **Backend-switch scripts:** `glm.sh`, `minimax.sh`, `offline.sh`, `offline-off.sh` at repo root — source them to switch Claude Code's own CLI session (not just `Inference.ts` subtask calls) to Z.ai GLM, MiniMax M3, or a local Ollama host, and back to Anthropic direct. New `PAI/backends/` source directory; `release.ts` promotes its `.sh` files to repo root with the executable bit set, same pattern as `install.sh`. `glm.sh`/`minimax.sh` read credentials via `passage` if installed, else fall back to `GLM_API_KEY`/`MINIMAX_API_KEY` env vars. `offline.sh` takes its target host from `PAI_OFFLINE_HOST` (defaults to `127.0.0.1`) instead of a hardcoded address. Documented in the README under "Backend switching."
+
+### Fixed
+- Release identifier gate: `PAI/PROFILES/work/CLAUDE.md` carried a personal domain and a username-derived path; added to the sanitizer so the staged copy scrubs both without touching the live file.
+
+---
+
 ## [0.3.0] — 2026-06-29
 
 ### Added

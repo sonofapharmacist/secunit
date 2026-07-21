@@ -39,11 +39,8 @@
       "ToolSearch",
       "Monitor",
       "RemoteTrigger",
-      "Write(~/.claude/**)",
       "Edit(~/.claude/**)",
       "Edit(~/Projects/**)",
-      "MultiEdit(~/.claude/**)",
-      "MultiEdit(~/Projects/**)",
       "Bash",
       "Agent(general-purpose)",
       "Agent(Explore)",
@@ -72,9 +69,7 @@
       "mcp__context7__*",
       "mcp__hermes__*",
       "mcp__playwright__*",
-      "Write(~/Downloads/**)",
-      "Edit(~/Downloads/**)",
-      "MultiEdit(~/Downloads/**)"
+      "Edit(~/Downloads/**)"
     ],
     "deny": [],
     "ask": [],
@@ -1290,7 +1285,7 @@
   "pai": {
     "version": "0.5.0",
     "algorithmVersion": "7.1.1",
-    "repoUrl": "https://github.com/sonsofapharmacist/secunit"
+    "repoUrl": "https://github.com/sonofapharmacist/secunit"
   },
   "preferences": {
     "temperatureUnit": "fahrenheit"

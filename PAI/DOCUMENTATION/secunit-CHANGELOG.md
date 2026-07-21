@@ -4,6 +4,23 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.5.0] — 2026-07-21
+
+### Added
+- **`install.sh` now installs system tools PAI's hooks and skills rely on:** `rtk` (Rust Token Killer, via its official installer), plus `jq`/`rg`/`fd`/`bat` via apt/brew/dnf/pacman auto-detection. Without `rtk`/`jq`, `hooks/ContextReduction.hook.sh` silently no-ops instead of compressing Bash output — this closes that gap by default on a fresh install. Prints an upfront banner naming each tool and exactly what degrades if it's skipped. Handles Debian's `fd-find`→`fdfind` binary rename via symlink, and detects root-vs-sudo so it works both on a normal dev machine and inside a container with neither `sudo` nor a non-root user.
+- **Opt out of tool installation** via `SECUNIT_SKIP_TOOLS=1` (always available — for CI/scripted installs) or an interactive `[Y/n]` prompt (only shown when stdin is a TTY, so non-interactive runs never hang).
+- `test-secunit-install.sh` now exercises both the default-install and `SECUNIT_SKIP_TOOLS=1` paths in the same Docker E2E run.
+
+### Fixed
+- Release identifier gate: extended sanitization to catch personal machine names, a Tailscale IP, and a LAN IP across `PULSE.toml`, `NightlyCodeReview.ts`, `threat_model_bench.ts`, and two `DOCUMENTATION/Decisions/` docs that had no prior sanitization entries.
+- `PAI/TOOLS/FreeTierEvals/threat_model_bench_results/` (personal benchmark run history) is now stripped from the release rather than shipped — it's run data, not a template.
+- Redacted a burned (already-rotated) Anthropic API key that was sitting in plaintext in `passage-secret-disclosure-guard.md`.
+- `hooks/ContextReduction.hook.sh` now warns to stderr when `rtk`/`jq` are missing instead of silently passing the command through unmodified — the silent case was previously indistinguishable from the hook working correctly.
+- `release.ts`'s own success message no longer prints a hardcoded personal Tailscale domain; derives the printed remote from `SECUNIT_REMOTE` instead.
+- `pai.repoUrl` in `settings.json` had a typo in the GitHub handle (`sonsofapharmacist` → `sonofapharmacist`).
+
+---
+
 ## [0.4.0] — 2026-07-05
 
 ### Added

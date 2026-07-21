@@ -1232,7 +1232,7 @@ async function main() {
     rm(STAGE_ROOT)
     if (_gitWorkDir) rm(_gitWorkDir)
     log('\n🎉 Release complete.' + (GITHUB_REMOTE ? '' : ' Set SECUNIT_GITHUB_REMOTE to also push to GitHub.'))
-    log(`   http://tower.goose-mirach.ts.net:3000/theultimate/secunit`)
+    log(`   ${FORGEJO_REMOTE}`)
   }
 }
 

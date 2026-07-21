@@ -53,7 +53,7 @@ Every host using Passage has the same hazard. Every agent that wants to do a pre
 ## Evidence
 
 - **Burned value:** `sk-ant-api03-[REDACTED-ROTATED-2026-07-05]` — rotated 2026-07-05
-- **Session artifacts:** `~.claude/PAI/MEMORY/KNOWLEDGE/Research/claude-fable-5-unified-bench-2026-07.md` §6 documents the incident; `~.claude/projects/-home-<username>/memory/feedback_passage_show_key_leak.md` is the per-session memory entry
+- **Session artifacts:** `~/.claude/PAI/MEMORY/KNOWLEDGE/Research/claude-fable-5-unified-bench-2026-07.md` §6 documents the incident; `~/.claude/projects/-home-<username>/memory/feedback_passage_show_key_leak.md` is the per-session memory entry
 - **Wider blast radius:** every PAI host that uses Passage (your-third-host, your-other-host, your-inference-host, your-third-host-vm, workhorse WSL) inherits the same `show <key>` semantics. Cost of the fix: one Passage patch + one Passage release. Cost of waiting: one more burned key per quarter.
 
 ## Consequences

@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
-export type Tier = 'fast' | 'standard' | 'smart';
+export type Tier = 'fast' | 'standard' | 'smart' | 'fable';
 
-const VALID_TIERS: ReadonlySet<Tier> = new Set<Tier>(['fast', 'standard', 'smart']);
+const VALID_TIERS: ReadonlySet<Tier> = new Set<Tier>(['fast', 'standard', 'smart', 'fable']);
 
 function resolveHomeDirectory(): string {
   return process.env.HOME || process.env.USERPROFILE || '';

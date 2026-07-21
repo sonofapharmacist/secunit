@@ -1004,6 +1004,11 @@ MODELS = {
         "max_tokens": 8192,
         "temperature": 0,
         "is_reasoning": True,
+        # Measured: reasoning_content trace alone hit 12.4K tokens on R2 (STRIDE->JSON)
+        # before answer content starts (enable_thinking:false is a no-op for this
+        # model's chat template) — see call_local's comment. Same Qwen3.6 family as
+        # qwen36_35b_a3b below, so the measurement applies to both.
+        "reasoning_min_tokens": 16000,
         "fence_strip": True,
         "type_filter": True,
     },
@@ -1013,6 +1018,7 @@ MODELS = {
         "max_tokens": 8192,
         "temperature": 0,
         "is_reasoning": True,
+        "reasoning_min_tokens": 16000,  # same family/measurement as qwen36_27b above
         "fence_strip": True,
         "type_filter": True,
     },
@@ -1152,6 +1158,7 @@ MODELS = {
         "max_tokens": 8192,
         "temperature": 1,
         "is_reasoning": True,
+        "reasoning_min_tokens": 16000,  # matches the cloud run this entry reproduces
         "fence_strip": True,
         "type_filter": False,
     },
@@ -1181,12 +1188,21 @@ TIMEOUT = int(os.environ.get("LLAMACPP_TIMEOUT", "180"))
 
 def call_local(cfg, prompt, max_tokens_override=None, tools=None, messages_override=None):
     """Returns (content_or_TOOL_CALLED, elapsed, err)."""
-    is_reasoning = cfg.get("is_reasoning", False)
-    # Reasoning-mode floor: Qwen3.6's reasoning_content trace alone measured 12.4K tokens
-    # on R2 (STRIDE->JSON) before the answer even starts (enable_thinking:false is a no-op
-    # for this model's chat template). 2048 silently truncates before any answer content.
-    base = max_tokens_override or cfg["max_tokens"]
-    effective_max = max(base, 16000) if is_reasoning else base
+    # `is not None` (not `or`) — max_tokens_override=0 is a legitimate explicit value,
+    # not "unset". The old `or` treated it as falsy and silently substituted cfg["max_tokens"],
+    # removing the caller's ability to set a lower budget than the config default.
+    base = max_tokens_override if max_tokens_override is not None else cfg["max_tokens"]
+    # Reasoning floor is per-model opt-in via reasoning_min_tokens, not a blanket 16000
+    # for every is_reasoning=True model. Only Qwen3.6 (qwen36_27b/35b_a3b) and
+    # nemotron3_30b_a3b_r have an empirical basis for 16K (see their config comments);
+    # applying that floor to every reasoning model regardless of measurement silently
+    # inflated max_tokens 2-8x for models never shown to need it, shrinking their margin
+    # against LLAMACPP_TIMEOUT on slower hardware. Unlisted reasoning models keep their
+    # own configured max_tokens — no forced floor.
+    reasoning_min = cfg.get("reasoning_min_tokens")
+    effective_max = max(base, reasoning_min) if reasoning_min else base
+    if reasoning_min and base < reasoning_min:
+        print(f"  [reasoning floor] {cfg['name']}: requested {base} tokens, raised to {effective_max} (reasoning_min_tokens)", file=sys.stderr)
 
     payload = {
         "model": cfg["model"],
@@ -1236,6 +1252,21 @@ def call_local(cfg, prompt, max_tokens_override=None, tools=None, messages_overr
             # Fence-strip (Qwen3.6, gemma-4 emit ```json fences on structured output)
             if cfg.get("fence_strip", False):
                 content = _strip_fences(content)
+
+            # Reasoning-leak detector: some Qwen-family models (see targeted_bench.py:78,
+            # nous_eval.py:40) dump raw <think>...</think> traces straight into `content`
+            # instead of a separate reasoning_content field, which neither type_filter (only
+            # fires on list-shaped content) nor fence_strip (only strips ```json fences)
+            # catches. Previously this was a manual "watch for it at T1" comment with no
+            # actual check — flag it here so a leak surfaces immediately instead of silently
+            # corrupting scorer input. Only warns when is_reasoning=False: a model already
+            # configured as reasoning is expected to emit <think> tags, so that's not a
+            # surprise worth flagging — the risk is specifically an unconfigured leak.
+            if not cfg.get("is_reasoning", False) and isinstance(content, str) and \
+               ("<think>" in content or "<thinking>" in content):
+                print(f"  [reasoning leak] {cfg['name']}: <think> tag found in content on a "
+                      f"model configured is_reasoning=False — flip is_reasoning to True and "
+                      f"set type_filter accordingly", file=sys.stderr)
 
             return content or "", elapsed, None
     except urllib.error.HTTPError as e:

@@ -4,9 +4,11 @@
 
 The Algorithm is PAI's universal engine for accomplishing any task. It transitions from **Current State** to **Ideal State** through verifiable iteration, using Ideal State Criteria (ISC) as the quality gate. Every interaction — memory capture, hook execution, learning synthesis — feeds back into improving the Algorithm itself.
 
-**Current version:** v7.1.0
-**Spec location:** `PAI/ALGORITHM/v7.1.0.md` (canonical pointer: `PAI/ALGORITHM/LATEST`)
+**Current version:** v7.1.1
+**Spec location:** `PAI/ALGORITHM/v7.1.1.md` (canonical pointer: `PAI/ALGORITHM/LATEST`)
 **Goal:** Euphoric Surprise — 9-10 user ratings on every response.
+
+**v7.1.1 frame shift:** Rule 2a (Cato cross-vendor audit) invokes `CrossVendorAudit.ts` via direct Bash, not `Agent(subagent_type: "Cato")` — two confirmed incidents (2026-06-15, 2026-07-10) of the agent wrapper silently narrating an in-character Opus answer instead of executing the mandatory codex shell-out, defeating the cross-vendor guarantee. Deterministic single-command tool calls no longer get delegated to an Agent().
 
 **v7.1.0 frame shift:** stub surface entry format (`♻︎ PAI v7.1.0 → [8-word task name]`), `violations_self_reported` field mandatory at E2+ in algorithm-reflections.jsonl, no-narration context recovery (read ISA and jump — suppress "ISA recovered" summaries), phase-completion checklist in VERIFY (explicit gate name + result for every mandatory gate; "all gates passed" is not valid evidence). Inherits v7.0.0 fail-safe routing (classifier errors → ALGORITHM E2 instead of E3) and all v6.x doctrine.
 
@@ -115,7 +117,7 @@ Apply to every criterion before finalizing:
 2. **Tier floor (HARD on the count)** — total ISC count meets the tier floor (E2 >=16, E3 >=32, E4 >=128, E5 >=256). Under-floor either keeps splitting or — at E2/E3 only — documents under-decomposition in `## Decisions` with a load-bearing reason. E4/E5 cannot under-floor.
 3. **Doctrinal minimums** — anti-criteria >=1; antecedent >=1 when the goal is experiential.
 
-> Canonical doctrine lives in `PAI/ALGORITHM/v7.1.0.md` (or follow `PAI/ALGORITHM/LATEST`). This summary is convenience-only — when in doubt, read the spec.
+> Canonical doctrine lives in `PAI/ALGORITHM/v7.1.1.md` (or follow `PAI/ALGORITHM/LATEST`). This summary is convenience-only — when in doubt, read the spec.
 
 ---
 
@@ -270,7 +272,7 @@ The Verification Doctrine is the bridge between "ran the code" and "trusted the 
 
 | File | Purpose |
 |------|---------|
-| `PAI/ALGORITHM/v7.1.0.md` | Full execution spec — the definitive Algorithm reference |
+| `PAI/ALGORITHM/v7.1.1.md` | Full execution spec — the definitive Algorithm reference |
 | `PAI/ALGORITHM/LATEST` | Symlink to the active version spec |
 | `PAI/ALGORITHM/capabilities.md` | Capability selection tables (thinking, code quality, delegation, research) |
 | `PAI/ALGORITHM/mode-detection.md` | Mode and parameter detection logic |
@@ -287,7 +289,8 @@ The Verification Doctrine is the bridge between "ran the code" and "trusted the 
 
 | Version | Key Changes |
 |---------|-------------|
-| **v7.1.0** (current) | **Stub surface + violations reporting.** Entry format `♻︎ PAI v7.1.0 → [8-word task name]`. `violations_self_reported` field mandatory at E2+ in algorithm-reflections.jsonl (list every phase skipped or gate missed; `[]` if none). No-narration context recovery (read ISA → jump, no status summary output). Phase-completion checklist in VERIFY (explicit gate name + result; "all gates passed" not valid). |
+| **v7.1.1** (current) | **Cato invocation hardened.** Rule 2a calls `CrossVendorAudit.ts` via direct Bash, not `Agent(subagent_type: "Cato")` — closes a phantom cross-vendor-audit failure mode (agent silently narrated an Opus answer instead of shelling out to codex, confirmed twice: 2026-06-15, 2026-07-10). |
+| v7.1.0 | **Stub surface + violations reporting.** Entry format `♻︎ PAI v7.1.0 → [8-word task name]`. `violations_self_reported` field mandatory at E2+ in algorithm-reflections.jsonl (list every phase skipped or gate missed; `[]` if none). No-narration context recovery (read ISA → jump, no status summary output). Phase-completion checklist in VERIFY (explicit gate name + result; "all gates passed" not valid). |
 | v7.0.0 | **Fail-safe routing.** Algorithm classifier errors (timeout, non-zero exit, unparseable JSON) route to ALGORITHM E2 — never silently fail-open or escalate to E3. Over-escalation on ambiguous inputs was the documented failure mode. |
 | **v6.3.0** | **Closed enumeration of thinking capabilities** — IterativeDepth, ApertureOscillation, FeedbackMemoryConsult, Advisor, ReReadCheck, FirstPrinciples, SystemsThinking, RootCauseAnalysis, Council, RedTeam, Science, BeCreative, Ideate, BitterPillEngineering, Evals, WorldThreatModel, Fabric patterns, ContextSearch, ISA. Phantom thinking-capability names (anything off-list) are CRITICAL FAILURE. **Capability-Name Audit Gate** fires at OBSERVE→THINK boundary — every selected name must appear verbatim in the closed list. New thinking capabilities require editing `capabilities.md` and bumping the Algorithm minor version |
 | v6.2.0 | Twelve-section ISA in fixed order; three-guardrail taxonomy (Principles / Constraints / Anti-criteria) with Out of Scope as anti-vision; HARD tier-completeness gate at every tier; **ISA Skill** introduced at `~/.claude/skills/ISA/` with six workflows (Scaffold, Interview, CheckCompleteness, Reconcile, Seed, Append); ID-stability rule formalized (no re-numbering, splits become ISC-N.M, drops become tombstones); ephemeral feature files (Ralph Loop / Maestro) with deterministic reconcile |
@@ -336,4 +339,4 @@ The Verification Doctrine is the bridge between "ran the code" and "trusted the 
 
 ---
 
-*Full execution spec: `PAI/ALGORITHM/v7.1.0.md` (or `PAI/ALGORITHM/LATEST`) | ISA format: `PAI/DOCUMENTATION/IsaFormat.md` | ISA skill: `skills/ISA/SKILL.md`*
+*Full execution spec: `PAI/ALGORITHM/v7.1.1.md` (or `PAI/ALGORITHM/LATEST`) | ISA format: `PAI/DOCUMENTATION/IsaFormat.md` | ISA skill: `skills/ISA/SKILL.md`*

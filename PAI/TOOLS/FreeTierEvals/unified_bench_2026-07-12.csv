@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+ministral8b,mistral,1,0,15,0,15,26,243.1,lite,,,0,0.0

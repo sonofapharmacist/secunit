@@ -67,6 +67,11 @@ enabled = true
 # Nightly autopilot code review — Forgejo repos only (pai-config, dinenasty).
 # Report-only: writes findings to MEMORY/STATE/code-review-queue.jsonl,
 # never auto-applies fixes. Skips a repo if no commits in the last 24h.
+# timeout_ms generous: worst case per repo is 120s your-inference-host pass + 300s Sonnet validation,
+# times 2 repos = 840s, plus headroom for the 600s direct-Sonnet fallback if your-inference-host is down.
+# your-inference-host is free/local so there's no cost pressure to keep this tight — 2026-07-08, after
+# the 60s default (spawnScript's fallback, this job never set its own) silently SIGTERM'd
+# every run for a week and tripped the 3-failure circuit breaker.
 [[job]]
 name = "nightly-code-review"
 schedule = "23 4 * * *"
@@ -74,6 +79,7 @@ type = "script"
 command = "bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/.claude --label pai-config && bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/code/dinenasty --label dinenasty"
 output = "log"
 enabled = true
+timeout_ms = 1800000
 
 [[job]]
 name = "healthcheck"

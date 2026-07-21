@@ -22,6 +22,7 @@ import { parseArgs } from "util";
 import * as fs from "fs";
 import * as path from "path";
 import { spawnSync } from "child_process";
+import * as os from "os";
 
 // ============================================================================
 // Configuration
@@ -37,7 +38,12 @@ const RESEARCH_DIR = path.join(MEMORY_DIR, "RESEARCH");
 const HARVEST_QUEUE_DIR = path.join(KNOWLEDGE_DIR, "_harvest-queue");
 const ARCHIVE_DIR = path.join(KNOWLEDGE_DIR, "_archive");
 
-const CURRENT_USER = process.env.USER;
+// Fall back to os.userInfo().username when invoked from environments that don't set $USER
+// (cron by default only inherits HOME/SHELL/LOGNAME/PATH; USER is a login-shell artifact).
+// Without this, the cron-scheduled daily harvest at 02:00 silently no-ops with exit 0 —
+// the chained `git diff --quiet || (git add -A && git commit ...)` then runs with stale
+// state and the harvest output never reaches a commit.
+const CURRENT_USER = process.env.USER || os.userInfo().username;
 if (!CURRENT_USER) {
   console.error("KnowledgeHarvester: USER env var is required to locate auto-memory dir");
   process.exit(1);

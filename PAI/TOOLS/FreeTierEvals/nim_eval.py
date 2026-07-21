@@ -318,8 +318,15 @@ MAX_SCORE_TOTAL = sum(t["max_score"] for t in TESTS)
 
 def call(model_id, prompt, max_tokens, is_reasoning, do_strip_fences):
     temperature = 1 if is_reasoning else 0.2
-    # Reasoning models need breathing room; G8 already sets 4096
-    effective_max = max(max_tokens, 2048) if is_reasoning else max_tokens
+    # Matches llamacpp_eval.py's reasoning floor (was 2048 here, raised to 16000 there after
+    # Qwen3.6's reasoning_content trace alone measured 12.4K tokens on R2 before answer content
+    # starts). This file's MODELS list includes nemotron-3-nano-omni-30b-a3b-reasoning — the
+    # same model as llamacpp_eval.py's nemotron3_30b_a3b_r, which has that exact floor set via
+    # reasoning_min_tokens — so the two files diverging left this one under-provisioned for a
+    # model they both bench. NIM is a cloud API (faster per-token than local GPU inference), so
+    # the timeout-margin tradeoff that mattered for llamacpp_eval.py is less acute here, but the
+    # same urlopen(timeout=180) applies — worth watching if a slower NIM model gets added.
+    effective_max = max(max_tokens, 16000) if is_reasoning else max_tokens
 
     payload = {
         "model": model_id,

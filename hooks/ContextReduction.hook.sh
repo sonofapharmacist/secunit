@@ -3,8 +3,15 @@
 # Transparently rewrites raw commands to their rtk equivalents.
 # Outputs JSON with updatedInput to modify the command before execution.
 
-# Guards: skip silently if dependencies missing
-if ! command -v rtk &>/dev/null || ! command -v jq &>/dev/null; then
+# Guards: allow the original command through if dependencies missing, but warn —
+# a silent skip here is indistinguishable from RTK working correctly, and cost two
+# days to diagnose (see feedback_rtk_hook_session_restart_required.md).
+if ! command -v rtk &>/dev/null; then
+  echo "[ContextReduction.hook.sh] rtk not found on PATH — RTK rewrite skipped, command passed through unmodified" >&2
+  exit 0
+fi
+if ! command -v jq &>/dev/null; then
+  echo "[ContextReduction.hook.sh] jq not found on PATH — RTK rewrite skipped, command passed through unmodified" >&2
   exit 0
 fi
 
@@ -95,6 +102,8 @@ elif echo "$MATCH_CMD" | grep -qE '^find[[:space:]]+'; then
   REWRITTEN="${ENV_PREFIX}$(echo "$CMD_BODY" | sed 's/^find /rtk find /')"
 elif echo "$MATCH_CMD" | grep -qE '^diff[[:space:]]+'; then
   REWRITTEN="${ENV_PREFIX}$(echo "$CMD_BODY" | sed 's/^diff /rtk diff /')"
+elif echo "$MATCH_CMD" | grep -qE '^wc[[:space:]]+'; then
+  REWRITTEN="${ENV_PREFIX}$(echo "$CMD_BODY" | sed 's/^wc /rtk wc /')"
 elif echo "$MATCH_CMD" | grep -qE '^head[[:space:]]+'; then
   # Transform: head -N file → rtk read file --max-lines N
   # Also handle: head --lines=N file

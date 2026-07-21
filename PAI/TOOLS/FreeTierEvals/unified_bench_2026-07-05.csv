@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status
+fable5,anthropic,0,9,7,9,25,53,224.6,complete

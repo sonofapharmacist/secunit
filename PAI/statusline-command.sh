@@ -289,9 +289,17 @@ case "${_backend_url:-}" in
         # before the quality cliff. Display matches CLAUDE_CODE_AUTO_COMPACT_WINDOW
         # in minimax.sh. See Research/m3-220k-empirical-ceiling-2026-06-18.md.
         # The localhost branch fires for the M3-via-OpenRouter litellm proxy on
-        # :4000 (minimax-or.sh). True local model servers (Ollama, llama-server)
-        # will fail the M3 env-var check and fall through to model-dependent.
-        if [ "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" = "claude-m3-cache-test" ] || [ -n "${OPENROUTER_API_KEY:-}" ]; then
+        # :4000 (minimax-or.sh), which sets ANTHROPIC_DEFAULT_SONNET_MODEL to the
+        # "claude-m3-cache-test" sentinel (real model names break Claude Code's
+        # prompt-cache key). Direct minimax.sh instead sets the model to the
+        # actual name "MiniMax-M3", so the sentinel-only check below wrongly
+        # missed it and fell through to model-dependent (found live 2026-07-08,
+        # PAI/MEMORY/STATE/code-review-queue.jsonl). Match on the model name
+        # containing "m3"/"minimax" too, so both backends hit the same 512K cap.
+        # True local model servers (Ollama, llama-server) still fail this check
+        # and correctly fall through to model-dependent.
+        if [ "${ANTHROPIC_DEFAULT_SONNET_MODEL:-}" = "claude-m3-cache-test" ] || \
+           [[ "${ANTHROPIC_DEFAULT_SONNET_MODEL,,}" == *m3* || "${ANTHROPIC_DEFAULT_SONNET_MODEL,,}" == *minimax* ]]; then
             context_max=524288; _context_window="512K"
             _model_override=1
         else

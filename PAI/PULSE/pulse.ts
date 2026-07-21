@@ -168,6 +168,7 @@ interface PulseConfig {
     model?: string
     output: string | string[]
     enabled: boolean
+    timeoutMs?: number
   }>
 }
 
@@ -523,6 +524,8 @@ async function main() {
 
         if (job.type === "claude") {
           output = await spawnClaude(job.prompt!, { model: job.model ?? "sonnet" })
+        } else if (job.timeoutMs !== undefined) {
+          output = await spawnScript(job.command!, job.timeoutMs)
         } else {
           output = await spawnScript(job.command!)
         }

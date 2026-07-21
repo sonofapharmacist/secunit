@@ -269,6 +269,11 @@ function strip() {
   rm(join(pai, '.quote-cache'))
   log('  ✓ .quote-cache stripped (regenerates from Aphorisms DB on first run)')
 
+  // --- FreeTierEvals/threat_model_bench_results/ → strip (personal run history,
+  // not a template — slot_label fields name GP's local machines) --
+  rm(join(pai, 'TOOLS', 'FreeTierEvals', 'threat_model_bench_results'))
+  log('  ✓ TOOLS/FreeTierEvals/threat_model_bench_results/ stripped (personal bench run history)')
+
   // --- secunit README → promote to repo root -------------------
   const readmeSrc = join(pai, 'DOCUMENTATION', 'secunit-README.md')
   if (existsSync(readmeSrc)) {
@@ -664,15 +669,44 @@ const SANITIZATIONS: Sanitization[] = [
   },
   {
     rel: 'PAI/PULSE/PULSE.toml',
-    replacements: [[/\/home\/realuser\//g, '${HOME}/']],
+    replacements: [
+      [/\/home\/realuser\//g, '${HOME}/'],
+      [/\bubullm\b/gi, 'your-inference-host'],
+    ],
   },
   {
     rel: 'PAI/TOOLS/NightlyCodeReview.ts',
-    replacements: [[/\/home\/realuser\//g, '${HOME}/']],
+    replacements: [
+      [/\/home\/realuser\//g, '${HOME}/'],
+      [/\bubullm\b/gi, 'your-inference-host'],
+      [/192\.168\.1\.240/g, '127.0.0.1'],
+    ],
   },
   {
     rel: 'PAI/TOOLS/FreeTierEvals/unified_bench.ts',
     replacements: [[/\bubullm\b/gi, 'your-inference-host']],
+  },
+  {
+    rel: 'PAI/TOOLS/FreeTierEvals/threat_model_bench.ts',
+    replacements: [
+      [/\bubullm\b/gi, 'your-inference-host'],
+      [/\bcsonprop\b/gi, 'your-other-host'],
+      [/100\.126\.185\.104/g, '127.0.0.1'],
+    ],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Decisions/threat-model-tier-0-routing.md',
+    replacements: [[/\bubullm\b/gi, 'your-inference-host']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Decisions/passage-secret-disclosure-guard.md',
+    replacements: [
+      [/\bubullm\b/gi, 'your-inference-host'],
+      [/\bcsonprop\b/gi, 'your-other-host'],
+      [/\bubupai\b/gi, 'your-third-host'],
+      [/\brealuser\b/g, '<username>'],
+      [/-home-realuser/g, '-home-<username>'],
+    ],
   },
   {
     rel: 'PAI/TOOLS/BackendHealth.ts',

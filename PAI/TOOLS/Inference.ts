@@ -39,10 +39,11 @@
  *   --timeout <ms>                 Custom timeout (default varies by level/backend)
  *
  * DEFAULTS BY LEVEL:
- *   fast:     model=haiku,   timeout=15s
- *   standard: model=sonnet,  timeout=30s
- *   smart:    model=opus,    timeout=90s
- *   advisor:  model=opus,    timeout=120s
+ *   fast:     model=haiku,         timeout=20s
+ *   standard: model=sonnet,        timeout=30s
+ *   smart:    model=opus,          timeout=90s
+ *   fable:    model=claude-fable-5, timeout=600s (API-direct; effort xhigh default; betas support)
+ *   advisor:  model=opus,          timeout=120s
  *
  * BILLING: Uses Claude CLI with subscription (not API key)
  * CACHE: Uses --exclude-dynamic-system-prompt-sections for cross-invocation prompt cache hits
@@ -289,6 +290,32 @@ export interface InferenceResult {
   fallbackReason?: string;
   /** Full resolved base URL (e.g. http://127.0.0.1:11434) used for the ollama call. Present on ollama success results. */
   resolvedUrl?: string;
+  // Fable 5 / Anthropic API direct fields. Populated on calls that route
+  // through inferenceAnthropicApi(). Used by the eval harness and any caller
+  // that needs to distinguish "Fable 5 served this" from "Opus 4.8 fallback
+  // served this" (the server-side-fallback-2026-06-01 beta header reroutes
+  // Fable 5 refusals to Opus 4.8 mid-call). The unified-bench file and
+  // the Project 1 threat-model eval both read these.
+  /** API-reported model that served the turn. May differ from requested model
+   *  when server-side fallback fired (e.g. requested "claude-fable-5",
+   *  served by "claude-opus-4-8"). */
+  apiModel?: string;
+  /** Stop reason from the API. "refusal" means safety classifier fired;
+   *  callers should read stopDetailsCategory for the routing category. */
+  apiStopReason?: string;
+  /** Fable 5 / Anthropic routing category on a refusal or fallback.
+   *  One of: "cyber" | "bio" | "frontier_llm" | "reasoning_extraction" | null. */
+  stopDetailsCategory?: string | null;
+  /** usage.iterations array from the response. Each entry has a `type` field;
+   *  `type === "fallback_message"` means a fallback model served this turn. */
+  apiIterations?: Array<{ type: string; [k: string]: unknown }>;
+  /** Input token count from the API (prompt_tokens). */
+  apiInputTokens?: number;
+  /** Output token count from the API (completion_tokens). */
+  apiOutputTokens?: number;
+  /** Thinking token count, if the model produced thinking blocks. Fable 5
+   *  always-on thinking means this is non-zero for every Fable 5 call. */
+  apiThinkingTokens?: number;
 }
 
 // Level configurations
@@ -296,6 +323,15 @@ const LEVEL_CONFIG: Record<InferenceLevel, { model: string; defaultTimeout: numb
   fast: { model: 'haiku', defaultTimeout: 20000 },
   standard: { model: 'sonnet', defaultTimeout: 30000 },
   smart: { model: 'opus', defaultTimeout: 90000 },
+  // Fable 5 (released 2026-06-09) — frontier tier with always-on thinking,
+  // effort dial (low|medium|high|xhigh|max), and server-side Opus 4.8 fallback
+  // via the server-side-fallback-2026-06-01 beta. Routed via Anthropic API
+  // direct (inferenceAnthropicApi) — not the claude CLI subprocess — because
+  // the CLI doesn't expose output_config.effort or betas, and subscription
+  // billing may not include Fable 5 access. 600s default covers xhigh effort
+  // on long security-planning prompts. See PAI/MEMORY/KNOWLEDGE/Research/
+  // claude-fable-5-ken-huang-10-weekend-security-projects-2026-07.md.
+  fable: { model: 'claude-fable-5', defaultTimeout: 600000 },
 };
 
 // Advisor-specific defaults (v3.23 VERIFY doctrine).
@@ -394,7 +430,7 @@ const HELP_TEXT = `Usage:
   NOTE: --backend openrouter requires OPENROUTER_API_KEY in ~/.claude/.env
 
 Options:
-  --level <fast|standard|smart>  Run level (default: standard; auto-inferred from model latency profile during --measure when omitted) — Claude only
+  --level <fast|standard|smart|fable>  Run level (default: standard; auto-inferred from model latency profile during --measure when omitted) — Claude only
   --backend <claude|ollama|antigravity|antigravity-api|nous|hermes|openrouter>  Backend to use (default: claude)
   --model <name>                 Ollama model name (overrides task-type selection)
   --task-type <code|general>     Ollama model selection: code→default_model, general→general_model
@@ -430,6 +466,7 @@ const DEFAULT_FALLBACK_MODELS: Record<InferenceLevel, string> = {
   fast: 'qwen2.5-coder:7b',       // lightweight — fast-tier PAI calls are sentiment/classification
   standard: 'qwen3:30b-a3b',      // Qwen3 MoE (~3B active), strong reasoning — replaces Sonnet for mode classification
   smart: 'qwen3:30b-a3b',         // best available locally — replaces Opus for advisor calls
+  fable: 'qwen3:30b-a3b',         // Fable 5 has no local model; fallback to best local is graceful degrade not parity
 };
 
 // Code default is safe (empty = all levels go Claude-first).
@@ -481,7 +518,7 @@ export async function readOllamaConfig(): Promise<OllamaConfig> {
         const raw = ollama?.prefer_local_for_levels;
         if (!Array.isArray(raw)) return fallback.preferLocalForLevels;
         return (raw as string[]).filter((v): v is InferenceLevel =>
-          ['fast', 'standard', 'smart'].includes(v)
+          ['fast', 'standard', 'smart', 'fable'].includes(v)
         );
       })(),
       localMode: ollama?.local_mode !== undefined ? Boolean(ollama.local_mode) : false,
@@ -545,7 +582,7 @@ export async function readAgyConfig(): Promise<AgyConfig> {
       preferForLevels: (() => {
         const rawLevels = agy.prefer_for_levels;
         if (!Array.isArray(rawLevels)) return fallback.preferForLevels;
-        return (rawLevels as string[]).filter((v): v is InferenceLevel => ['fast', 'standard', 'smart'].includes(v));
+        return (rawLevels as string[]).filter((v): v is InferenceLevel => ['fast', 'standard', 'smart', 'fable'].includes(v));
       })(),
     };
   } catch {
@@ -1740,6 +1777,166 @@ function inferenceClaudeSubprocess(options: InferenceOptions): Promise<Inference
 }
 
 /**
+ * Run inference via the Anthropic API directly (not the claude CLI).
+ *
+ * Use case: Fable 5 and other models that require API-only parameters the CLI
+ * doesn't expose — output_config.effort (Fable 5's depth dial), the
+ * server-side-fallback-2026-06-01 beta (which the CLI only honors for API-key
+ * users and never with the subscription scrub path), and any future beta
+ * headers. Also used for any caller that needs the API-reported model
+ * (apiModel), routing category (stopDetailsCategory), and iterations array
+ * (apiIterations) — the CLI path can't return these.
+ *
+ * Auth: reads the key from `passage show api/anthropic` (PAI standard for
+ * Anthropic secrets). If the key is missing, returns a structured error —
+ * the CLI subscription path is unavailable for Fable 5 because Anthropic
+ * doesn't expose Fable 5 on the OAuth/subscription tier.
+ *
+ * Effort default: xhigh (Fable 5's highest practical setting per Anthropic's
+ * own prompting guide, where it's described as the right default for
+ * "planning/synthesis" tasks). Callers can override via
+ * options.effort (low|medium|high|xhigh|max).
+ *
+ * Always-on thinking: Fable 5 does not accept a temperature/top_p/budget_tokens
+ * param; thinking runs on every call. We capture apiThinkingTokens so callers
+ * (and the eval harness) can account for the cost.
+ *
+ * Exported for the eval harness at FreeTierEvals/threat_model_bench.ts —
+ * the harness calls this directly for Fable 5 calls so it can capture the
+ * full routing metadata (apiModel, stopDetailsCategory, apiIterations) in
+ * the result JSON.
+ */
+export async function inferenceAnthropicApi(options: InferenceOptions): Promise<InferenceResult> {
+  const startTime = Date.now();
+  const level = options.level ?? 'standard';
+  const config = LEVEL_CONFIG[level];
+  const timeout = options.timeout ?? config.defaultTimeout;
+
+  // Resolve API key from passage. Cache across calls within this process.
+  const apiKey = await resolveAnthropicApiKey();
+  if (!apiKey) {
+    return {
+      success: false,
+      output: '',
+      error: 'ANTHROPIC_API_KEY not found in passage (api/anthropic) and ANTHROPIC_API_KEY env is unset. Fable 5 (--level fable) requires API-direct auth — the claude CLI subscription path does not expose Fable 5 access. Run `passage insert api/anthropic` to add the key.',
+      latencyMs: Date.now() - startTime,
+      level,
+    };
+  }
+
+  // Lazy-load the SDK so non-Fable code paths don't pay the import cost.
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
+  // Bypass ANTHROPIC_BASE_URL if set (e.g. to a local proxy like
+  // http://localhost:4000 with a model allowlist) — Fable 5 needs the real
+  // api.anthropic.com endpoint. The SDK accepts baseURL as a client option,
+  // which overrides the env var. Anthropic SDK also reads ANTHROPIC_API_KEY
+  // from env automatically; we pass apiKey explicitly to avoid that path
+  // picking up the OpenRouter-shaped key PAI uses for other code.
+  const client = new Anthropic({
+    apiKey,
+    baseURL: 'https://api.anthropic.com',
+  });
+
+  // Effort dial: xhigh is the Fable 5 default for planning/synthesis per
+  // Anthropic's Prompting Fable 5 guide. Callers can override via
+  // options.effort if they want a different effort level.
+  const effort = (options as { effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' }).effort
+    ?? 'xhigh';
+
+  // Server-side fallback to Opus 4.8 — required for the routing-category
+  // tracking (cyber/bio/frontier_llm/reasoning_extraction) and to avoid
+  // manual retry plumbing. The SDK extracts `betas` from the params and
+  // sends them as the `anthropic-beta` header; the `fallbacks` body param
+  // tells the API to reroute to claude-opus-4-8 if Fable 5's safety
+  // classifier fires. See kenhuangus/fable5/refusal/refusal_stack.py
+  // for the same pattern in Python.
+  const fallbacks = [{ model: 'claude-opus-4-8' }];
+  const betas = ['server-side-fallback-2026-06-01'];
+
+  try {
+    const response = await client.beta.messages.create({
+      model: config.model,
+      max_tokens: 4096,
+      system: options.systemPrompt,
+      messages: [{ role: 'user', content: options.userPrompt }],
+      output_config: { effort },
+      betas,
+      fallbacks,
+    }, { timeout });
+
+    const latencyMs = Date.now() - startTime;
+
+    // Extract text blocks. If stop_reason is "refusal", content is empty
+    // per Anthropic's refusal semantics — treat as a structured error so
+    // callers can distinguish "model declined" from "network died".
+    const text = response.content
+      .filter((b): b is { type: 'text'; text: string; citations: unknown[] } => b.type === 'text')
+      .map((b) => b.text)
+      .join('');
+
+    // Routing metadata — load-bearing for the eval harness and any caller
+    // doing refusal-routing analysis.
+    const iterations = (response.usage as unknown as { iterations?: Array<{ type: string; [k: string]: unknown }> })
+      ?.iterations ?? [];
+    const servedByFallback = iterations.some((it) => it.type === 'fallback_message');
+    const stopDetails = (response as unknown as { stop_details?: { category?: string } | null })
+      .stop_details ?? null;
+
+    return {
+      success: response.stop_reason !== 'refusal',
+      output: text,
+      latencyMs,
+      level,
+      model: config.model,
+      apiModel: response.model,
+      apiStopReason: response.stop_reason,
+      stopDetailsCategory: stopDetails?.category ?? null,
+      apiIterations: iterations,
+      apiInputTokens: response.usage.input_tokens,
+      apiOutputTokens: response.usage.output_tokens,
+      apiThinkingTokens: (response.usage as unknown as { output_tokens_details?: { thinking_tokens?: number } })
+        .output_tokens_details?.thinking_tokens,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      output: '',
+      error: err instanceof Error ? err.message : String(err),
+      latencyMs: Date.now() - startTime,
+      level,
+      model: config.model,
+    };
+  }
+}
+
+// Cache the Anthropic API key across calls so we don't shell out to passage
+// on every Fable 5 invocation.
+let _anthropicApiKeyCache: { key: string | null; resolvedAt: number } | undefined;
+const ANTHROPIC_KEY_CACHE_TTL_MS = 60_000; // 1 min — Passage lookups are cheap but not free.
+
+async function resolveAnthropicApiKey(): Promise<string | null> {
+  if (process.env.ANTHROPIC_API_KEY?.trim()) {
+    return process.env.ANTHROPIC_API_KEY.trim();
+  }
+  if (_anthropicApiKeyCache && Date.now() - _anthropicApiKeyCache.resolvedAt < ANTHROPIC_KEY_CACHE_TTL_MS) {
+    return _anthropicApiKeyCache.key;
+  }
+  try {
+    const proc = Bun.spawn(['passage', 'show', 'api/anthropic'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const key = (await new Response(proc.stdout).text()).trim() || null;
+    await proc.exited;
+    _anthropicApiKeyCache = { key, resolvedAt: Date.now() };
+    return key;
+  } catch {
+    _anthropicApiKeyCache = { key: null, resolvedAt: Date.now() };
+    return null;
+  }
+}
+
+/**
  * Run inference via the agy CLI subprocess (Google Antigravity, subscription-backed).
  *
  * Uses `agy --print` non-interactive mode — same subscription billing as the IDE,
@@ -2185,6 +2382,18 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
     }
   }
 
+  // Fable 5 path — API direct, not the Claude CLI subprocess. The CLI path
+  // scrubs ANTHROPIC_API_KEY to enforce subscription billing and doesn't
+  // expose output_config.effort or the server-side-fallback beta, both of
+  // which Fable 5 requires. Routing is conditional on level === 'fable';
+  // any other level still goes through the Claude subprocess (subscription
+  // path) below.
+  if (level === 'fable') {
+    const fableResult = await inferenceAnthropicApi(effectiveOptions);
+    logInferenceCall('claude', fableResult, level, effectiveOptions.taskType);
+    return fableResult;
+  }
+
   // Claude path
   const result = await inferenceClaudeSubprocess(effectiveOptions);
 
@@ -2467,11 +2676,11 @@ async function main() {
       i++;
     } else if (args[i] === '--level' && args[i + 1]) {
       const requestedLevel = args[i + 1].toLowerCase();
-      if (['fast', 'standard', 'smart'].includes(requestedLevel)) {
+      if (['fast', 'standard', 'smart', 'fable'].includes(requestedLevel)) {
         level = requestedLevel as InferenceLevel;
         levelExplicit = true;
       } else {
-        console.error(`Invalid level: ${args[i + 1]}. Use fast, standard, or smart.`);
+        console.error(`Invalid level: ${args[i + 1]}. Use fast, standard, smart, or fable.`);
         process.exit(1);
       }
       i++;

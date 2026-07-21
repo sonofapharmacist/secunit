@@ -22,6 +22,7 @@ export interface Job {
   model?: string
   output: OutputTarget | OutputTarget[]
   enabled: boolean
+  timeoutMs?: number
 }
 
 export interface DaemonConfig {
@@ -61,6 +62,7 @@ export async function loadConfig(daemonDir: string): Promise<DaemonConfig> {
     model: (j.model as string) ?? "sonnet",
     output: (j.output ?? "log") as OutputTarget | OutputTarget[],
     enabled: (j.enabled as boolean) ?? true,
+    timeoutMs: typeof j.timeout_ms === "number" ? j.timeout_ms : undefined,
   }))
 
   return { jobs }
@@ -243,14 +245,25 @@ export function isSentinel(output: string): boolean {
 // ── Process Spawning ──
 
 export async function spawnScript(command: string, timeoutMs = 60_000): Promise<string> {
-  const proc = Bun.spawn(["bash", "-c", command], {
+  // `setsid` puts bash and every descendant it spawns (bun, git, claude, ...) in a fresh
+  // process group. Without it, SIGTERM sent to just the bash PID never reaches grandchildren —
+  // bash doesn't forward signals to children it isn't interactively controlling — so a timed-out
+  // job kept running in the background while spawnScript sat awaiting an `exited` that could
+  // take minutes longer to arrive. Killing the negative PID (the group) reaches all of them.
+  const proc = Bun.spawn(["setsid", "bash", "-c", command], {
     stdout: "pipe",
     stderr: "pipe",
     cwd: join(process.env.HOME ?? "~", ".claude", "PAI", "PULSE"),
     env: { ...process.env },
   })
 
-  const timer = setTimeout(() => proc.kill("SIGTERM"), timeoutMs)
+  const timer = setTimeout(() => {
+    try {
+      process.kill(-proc.pid, "SIGTERM")
+    } catch {
+      proc.kill("SIGTERM")
+    }
+  }, timeoutMs)
   const output = await new Response(proc.stdout).text()
   const exitCode = await proc.exited
   clearTimeout(timer)

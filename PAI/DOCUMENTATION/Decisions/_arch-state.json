@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "lastUpdated": "2026-07-05T03:49:21.042Z",
-  "algorithmVersion": "7.1.0",
+  "lastUpdated": "2026-07-21T13:17:12.982Z",
+  "algorithmVersion": "7.1.1",
   "subsystems": [
     "Life OS thesis (what PAI is for)",
     "Life OS schema (USER/ shape)",

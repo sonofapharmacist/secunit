@@ -1,6 +1,6 @@
 # Fork Workflow
 
-Tag and track a session branch. The forking mechanic itself is Claude Code's native `--continue --fork-session` — this workflow adds the naming/tracking convention that makes `Conclude` and `Merge` able to find their way back to the parent.
+Tag and track a session branch. The forking mechanic itself is Claude Code's native `--fork-session` flag — this workflow adds the naming/tracking convention that makes `Conclude` and `Merge` able to find their way back to the parent. See Step 5 for the exact invocation (`--resume {parent_session_id} --fork-session`, not bare `--continue`).
 
 ## When to invoke
 
@@ -29,12 +29,6 @@ Every tracking file this workflow writes lives under a `{parent_slug}` directory
 ### Step 1 — Voice notification
 
 ```bash
-curl -s -X POST http://localhost:31337/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Fork workflow in the SessionFork skill"}' \
-  > /dev/null 2>&1 &
-```
-
 ### Step 2 — Check for prior art before committing to the fork
 
 A fork is only worth its cost if the detour actually needs fresh investigation. Before generating a slug, spend one targeted pass checking whether the answer already exists:
@@ -70,11 +64,28 @@ This is the pointer `Conclude` and `Merge` read to know where to reintegrate. Wi
 
 If Step 2 found partial prior art, record it in the tracking file too — add a `prior_art` field listing the cited paths, so `Conclude` can distinguish what the fork actually discovered from what it inherited already-known.
 
-### Step 5 — Invoke the native fork
+### Step 5 — Hand off the native fork invocation to the user
 
-Run `claude --continue --fork-session` (or the session's equivalent fork invocation). The forked session inherits the full parent transcript up to this point.
+`claude --continue --fork-session` is a top-level shell command. It launches a new `claude` process — the assistant cannot run this itself. `CLAUDECODE` env blocks nested sessions, and running a `claude` subprocess inline is prohibited outright (see CLAUDE.md's operational rules). This is not a corner case to route around; it is the only way this step can happen. Do not attempt to invoke it, simulate it, or treat a failed attempt as the normal failure path — there is no attempt to make.
 
-**If the native fork invocation fails** (non-zero exit, unsupported in this Claude Code version, etc.): set `"status": "fork_failed"` in the tracking file and report the failure — do not leave the tracking file at `"open"` for a fork that never actually happened, and do not proceed to hand a fork_slug to the user as if a working branch exists.
+**Default to `--resume {parent_session_id} --fork-session`, not `--continue --fork-session`.** `--continue` resumes "the most recent conversation *in the current directory*" — it does not target this specific session. If any other `claude` process has touched this same working directory more recently (a second terminal, a background session, anything), `--continue` silently forks the wrong conversation with no error — the user ends up in an unrelated session's context and may not notice until well into the detour. `parent_session_id` is already captured in the tracking JSON at Step 4, so the precise form costs nothing extra and removes the ambiguity entirely. Empirically hit in practice (2026-07-22): a `--continue`-based handoff forked into an unrelated session mid-way through unrelated tooling work.
+
+Report back to the user with the exact command to run, tagged with the fork_slug for their reference:
+
+```
+Fork prepared: {fork_slug}
+Run this in a new terminal (or via /resume) to branch:
+  claude --resume {parent_session_id} --fork-session
+The forked session inherits this session's full transcript. Once it's running,
+work the detour there — Conclude and Merge will find their way back via the
+tracking file at MEMORY/WORK/{parent_slug}/_forks/{fork_slug}.json.
+```
+
+Only offer the shorter `claude --continue --fork-session` form when the user explicitly asks for it or confirms this is the only active session in the directory — never as the default suggestion.
+
+Then stop and wait — do not mark the tracking file `"open"` as if the fork is confirmed running. Leave it at the `"open"` status set in Step 4 (that status means "prepared, handoff issued," not "fork confirmed"); if the user later reports back that they never ran the command or abandoned the detour, follow the Abandoned-fork lifecycle below rather than leaving it ambiguous.
+
+**Non-interactive execution** (e.g. this workflow is running inside a background `Agent()` dispatch or another context where there is no user available to hand off to): the fork genuinely cannot proceed. Set `"status": "fork_failed"` in the tracking file with a `fork_failed_reason` explaining that no interactive user was available for the handoff, and report the failure rather than fabricating a fork that never happened.
 
 ### Step 6 — Confirm
 
@@ -92,5 +103,5 @@ A fork that never reaches `Conclude` is the expected common case, not an edge ca
 
 - **No `parent_isa_path` and no `parent_session_id`:** abort — `Merge` has no destination without at least one of these. Ask the user which one to use before proceeding.
 - **Forking for something Agent dispatch would cover:** if the detour doesn't actually need the parent's accumulated transcript (i.e., a clean prompt could scope it), stop and recommend `Agent()` instead — forking is the more expensive tool and should not be the default.
-- **Native fork invocation fails:** see Step 5 — mark `fork_failed`, never leave a phantom `open` fork with no actual forked session behind it.
+- **No interactive user available for the Step 5 handoff** (non-interactive/background execution): see Step 5 — mark `fork_failed` with a `fork_failed_reason`, never leave a phantom `open` fork with no handoff issued and no actual forked session behind it. In the normal interactive case, `"open"` after Step 5 just means "handoff issued, not yet confirmed" — that is expected, not a failure.
 - **Skipping Step 2's prior-art check:** the fork proceeds on a subject that was already fully answered in `MEMORY/KNOWLEDGE/` or a prior ISA. The resulting Conclude artifact may look structurally valid (passes the Anchor Rule) while being an unnecessary, ungrounded re-derivation of something already known — the Anchor Rule checks that reasoning is anchored, not that the fork needed to happen at all. Step 2 is the only guard against this.

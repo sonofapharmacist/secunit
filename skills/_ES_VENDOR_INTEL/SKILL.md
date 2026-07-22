@@ -12,15 +12,6 @@ context: inline
 
 If this directory exists, load and apply any PREFERENCES.md, configurations, or resources found there. These override default behavior.
 
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-```bash
-curl -s -X POST http://localhost:31337/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the VendorIntel skill to research vendor market position"}' \
-  > /dev/null 2>&1 &
-```
-
 Output text:
 ```
 Running the **VendorIntel** skill to research cybersecurity vendor intelligence...

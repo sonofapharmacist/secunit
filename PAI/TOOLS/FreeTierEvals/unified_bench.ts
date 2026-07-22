@@ -146,6 +146,8 @@ const MODELS: ModelSpec[] = [
   { key: "flash25", name: "Gemini 2.5 Flash (thinking-capable)", model: "gemini-2.5-flash", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 2 },
   { key: "flash35", name: "Gemini 3.5 Flash (thinking-capable)", model: "gemini-3.5-flash", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 2 },
   { key: "flashLite31", name: "Gemini 3.1 Flash-Lite (free tier)", model: "gemini-3.1-flash-lite", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 3 },
+  { key: "flash36", name: "Gemini 3.6 Flash (thinking-capable)", model: "gemini-3.6-flash", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 2 },
+  { key: "flashLite35", name: "Gemini 3.5 Flash-Lite (free tier)", model: "gemini-3.5-flash-lite", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 3 },
   // Local llama-server roster (your-inference-host, V100 32GB HBM2, OpenAI-compat :11434, no auth)
   // Keys here MUST match the MODELS dict in llamacpp_eval.py. Run order per ISA Decision 2026-06-23 14:31.
   { key: "gptOss20b", name: "OpenAI GPT-OSS-20B (your-inference-host MXFP4)", model: "gpt-oss-20b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 0, passageKey: "", tier: 1 },
@@ -219,11 +221,6 @@ interface BenchResult {
 
 const SCRIPT_DIR_ABS = join(import.meta.dir);
 
-// Scripts that live in the work-dir from the 2026-06-15 shell-fallback-deeper-tests session
-// rather than alongside this file — this path already had to be fixed once for a depth bug,
-// so it's centralized here instead of duplicated verbatim across each resolveScriptFor* return.
-const WORK_DIR_SCRIPTS = "../../MEMORY/WORK/2026-06-15-shell-fallback-deeper-tests";
-
 async function runPythonScript(script: string, args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const proc = spawn({
     cmd: ["python3", join(SCRIPT_DIR_ABS, script), ...args],
@@ -254,44 +251,44 @@ const PROVIDER_SCRIPTS: Record<Provider, ProviderScripts> = {
   llamacpp: { t: "llamacpp_eval.py", r: "llamacpp_eval.py", c: "llamacpp_eval.py" },
   mistral: {
     t: "mistral_eval.py",
-    r: `${WORK_DIR_SCRIPTS}/mistral_reasoning_probe.py`,
-    c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+    r: "mistral_reasoning_probe.py",
+    c: "coding_battery.py",
   },
-  nim: { t: "nim_eval.py", r: "reasoning_eval.py", c: `${WORK_DIR_SCRIPTS}/coding_battery.py` },
+  nim: { t: "nim_eval.py", r: "reasoning_eval.py", c: "coding_battery.py" },
   cohere: {
     t: "mistral_eval.py", // fallback — cohere has no dedicated T-battery script
-    r: `${WORK_DIR_SCRIPTS}/cohere_reasoning_probe.py`,
-    c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+    r: "cohere_reasoning_probe.py",
+    c: "coding_battery.py",
   },
   gemini: {
-    t: "../../MEMORY/WORK/gemini-unified-bench/gemini_t_battery.py",
+    t: "gemini_t_battery.py",
     r: "gemini_reasoning_probe.py",
-    c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+    c: "coding_battery.py",
   },
   // anthropic and anthropicCompat providers (Z.ai, MiniMax) share the anthropic_compat_*
   // scripts — anthropicCompat is a boolean modifier on other providers, not its own Provider
   // value, so it's handled via the override below rather than as a table row.
   anthropic: {
-    t: `${WORK_DIR_SCRIPTS}/anthropic_compat_eval.py`,
-    r: `${WORK_DIR_SCRIPTS}/anthropic_compat_reasoning_probe.py`,
-    c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+    t: "anthropic_compat_eval.py",
+    r: "anthropic_compat_reasoning_probe.py",
+    c: "coding_battery.py",
   },
   zai: {
     t: "mistral_eval.py", // fallback until anthropicCompat is set true for this provider's models
     r: "reasoning_eval.py",
-    c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+    c: "coding_battery.py",
   },
   minimax: {
     t: "mistral_eval.py", // fallback until anthropicCompat is set true for this provider's models
     r: "reasoning_eval.py",
-    c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+    c: "coding_battery.py",
   },
 };
 
 const ANTHROPIC_COMPAT_SCRIPTS: ProviderScripts = {
-  t: `${WORK_DIR_SCRIPTS}/anthropic_compat_eval.py`,
-  r: `${WORK_DIR_SCRIPTS}/anthropic_compat_reasoning_probe.py`,
-  c: `${WORK_DIR_SCRIPTS}/coding_battery.py`,
+  t: "anthropic_compat_eval.py",
+  r: "anthropic_compat_reasoning_probe.py",
+  c: "coding_battery.py",
 };
 
 // Providers whose own dedicated script takes precedence over the anthropicCompat flag, PER
@@ -339,6 +336,8 @@ function targetKeyFor(model: ModelSpec): string {
     flash25: "flash_25",
     flash35: "flash_35",
     flashLite31: "flash_lite_31",
+    flash36: "flash_36",
+    flashLite35: "flash_lite_35",
   };
   return map[model.key] ?? model.key;
 }

@@ -1,0 +1,627 @@
+{
+  "T:T1": {
+    "battery": "T",
+    "id": "T1",
+    "label": "MINIMAL \u2014 terse ack",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T16:52:37Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:03:55Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "Acknowledged.",
+    "last_run_at": "2026-07-22T17:03:55Z"
+  },
+  "T:T2": {
+    "battery": "T",
+    "id": "T2",
+    "label": "Classify \u2014 simple lookup",
+    "max_score": 1,
+    "streak": 0,
+    "complete": false,
+    "attempts": 4,
+    "history": [
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T16:52:38Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T17:03:57Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T18:04:05Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T19:06:07Z"
+      }
+    ],
+    "last_score": 0,
+    "last_clean": false,
+    "last_note": "MINIMAL",
+    "last_run_at": "2026-07-22T19:06:07Z"
+  },
+  "T:T3": {
+    "battery": "T",
+    "id": "T3",
+    "label": "Classify \u2014 multi-step",
+    "max_score": 1,
+    "streak": 0,
+    "complete": false,
+    "attempts": 4,
+    "history": [
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T16:52:41Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T17:03:59Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T18:04:09Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T19:06:09Z"
+      }
+    ],
+    "last_score": 0,
+    "last_clean": false,
+    "last_note": "NATIVE",
+    "last_run_at": "2026-07-22T19:06:09Z"
+  },
+  "T:T4": {
+    "battery": "T",
+    "id": "T4",
+    "label": "JSON \u2014 structured",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T16:52:43Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:04:01Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "{\"status\": \"ok\", \"count\": 42}",
+    "last_run_at": "2026-07-22T17:04:01Z"
+  },
+  "T:T5": {
+    "battery": "T",
+    "id": "T5",
+    "label": "Reasoning \u2014 logic puzzle",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T16:52:45Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:04:03Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "Carol",
+    "last_run_at": "2026-07-22T17:04:03Z"
+  },
+  "T:T6": {
+    "battery": "T",
+    "id": "T6",
+    "label": "Code gen \u2014 TS palindrome",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T16:52:48Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:04:07Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "```typescript function isPalindrome(str: string): boolean { ",
+    "last_run_at": "2026-07-22T17:04:07Z"
+  },
+  "T:T7": {
+    "battery": "T",
+    "id": "T7",
+    "label": "Instruction \u2014 3 bullets",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T16:54:05Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:05:56Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T18:04:31Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "* **SQL Injection:** Executing unauthorized database command",
+    "last_run_at": "2026-07-22T18:04:31Z"
+  },
+  "T:T8": {
+    "battery": "T",
+    "id": "T8",
+    "label": "Function calling",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T16:54:07Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:05:58Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "TOOL_CALLED",
+    "last_run_at": "2026-07-22T17:05:58Z"
+  },
+  "T:T9": {
+    "battery": "T",
+    "id": "T9",
+    "label": "STRIDE \u2014 SQL injection",
+    "max_score": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T16:54:11Z"
+      },
+      {
+        "score": 1,
+        "clean": true,
+        "at": "2026-07-22T17:06:02Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": true,
+    "last_note": "T",
+    "last_run_at": "2026-07-22T17:06:02Z"
+  },
+  "R:R1": {
+    "battery": "R",
+    "id": "R1",
+    "label": "Logic (knights/knaves)",
+    "max_score": 2,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 2,
+        "clean": true,
+        "at": "2026-07-22T17:06:13Z"
+      },
+      {
+        "score": 2,
+        "clean": true,
+        "at": "2026-07-22T18:04:45Z"
+      }
+    ],
+    "last_score": 2,
+    "last_clean": true,
+    "last_note": "\"To solve this logic puzzle, let's analyze the statements mad\"",
+    "last_run_at": "2026-07-22T18:04:45Z"
+  },
+  "R:R2": {
+    "battery": "R",
+    "id": "R2",
+    "label": "STRIDE \u2192 JSON",
+    "max_score": 5,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 5,
+        "clean": true,
+        "at": "2026-07-22T17:07:18Z"
+      },
+      {
+        "score": 5,
+        "clean": true,
+        "at": "2026-07-22T18:07:13Z"
+      }
+    ],
+    "last_score": 5,
+    "last_clean": true,
+    "last_note": "'[\\n  {\\n    \"stride_category\": \"Elevation of Privilege\",\\n    \"'",
+    "last_run_at": "2026-07-22T18:07:13Z"
+  },
+  "R:R3": {
+    "battery": "R",
+    "id": "R3",
+    "label": "Flask vulns",
+    "max_score": 3,
+    "streak": 0,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T17:07:57Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T18:09:35Z"
+      },
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T19:06:26Z"
+      }
+    ],
+    "last_score": 2,
+    "last_clean": false,
+    "last_note": "'I cannot analyze this specific code snippet for security vul'",
+    "last_run_at": "2026-07-22T19:06:26Z"
+  },
+  "R:R4": {
+    "battery": "R",
+    "id": "R4",
+    "label": "Logic grid",
+    "max_score": 3,
+    "streak": 2,
+    "complete": true,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T17:08:08Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T18:09:46Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T19:06:30Z"
+      }
+    ],
+    "last_score": 3,
+    "last_clean": true,
+    "last_note": "'Here is the step-by-step solution to the logic puzzle:\\n\\n### '",
+    "last_run_at": "2026-07-22T19:06:30Z"
+  },
+  "R:R5": {
+    "battery": "R",
+    "id": "R5",
+    "label": "Rate limiter bugs",
+    "max_score": 2,
+    "streak": 0,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T17:08:17Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T18:09:55Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T19:06:40Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "'Here are the specific bugs, edge cases, and architectural is'",
+    "last_run_at": "2026-07-22T19:06:40Z"
+  },
+  "R:R6": {
+    "battery": "R",
+    "id": "R6",
+    "label": "Redis vs DynamoDB",
+    "max_score": 2,
+    "streak": 0,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 2,
+        "clean": true,
+        "at": "2026-07-22T17:08:26Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T18:10:04Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T19:06:48Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "'### Comparison: Redis Cluster vs. DynamoDB (20 GB total data'",
+    "last_run_at": "2026-07-22T19:06:48Z"
+  },
+  "C:C1": {
+    "battery": "C",
+    "id": "C1",
+    "label": "TS-strict type narrowing",
+    "max_score": 3,
+    "streak": 1,
+    "complete": false,
+    "attempts": 4,
+    "history": [
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T17:12:45Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T17:15:52Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T18:13:46Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T19:07:00Z"
+      }
+    ],
+    "last_score": 3,
+    "last_clean": true,
+    "last_note": "reject paths: missing=True malformed=True expired=True; never exhaustive check p",
+    "last_run_at": "2026-07-22T19:07:00Z"
+  },
+  "C:C2": {
+    "battery": "C",
+    "id": "C2",
+    "label": "Debug from stack trace + repro",
+    "max_score": 3,
+    "streak": 0,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T17:17:55Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T18:14:03Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T19:07:13Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "identifies bug but wrong cause",
+    "last_run_at": "2026-07-22T19:07:13Z"
+  },
+  "C:C3": {
+    "battery": "C",
+    "id": "C3",
+    "label": "Multi-file refactor",
+    "max_score": 3,
+    "streak": 1,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T17:18:00Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T18:14:08Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T19:07:18Z"
+      }
+    ],
+    "last_score": 3,
+    "last_clean": true,
+    "last_note": "all 3 files correct, signatures preserved, Buffer only in auth.ts; clean module ",
+    "last_run_at": "2026-07-22T19:07:18Z"
+  },
+  "C:C4": {
+    "battery": "C",
+    "id": "C4",
+    "label": "Test generation",
+    "max_score": 5,
+    "streak": 0,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T17:18:13Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T18:14:24Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T19:07:34Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "found 1 tests (it=1 test=0)",
+    "last_run_at": "2026-07-22T19:07:34Z"
+  },
+  "C:C5": {
+    "battery": "C",
+    "id": "C5",
+    "label": "REST API design",
+    "max_score": 5,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 5,
+        "clean": true,
+        "at": "2026-07-22T17:18:24Z"
+      },
+      {
+        "score": 5,
+        "clean": true,
+        "at": "2026-07-22T18:14:35Z"
+      }
+    ],
+    "last_score": 5,
+    "last_clean": true,
+    "last_note": "secret handling (no full key/hash in list): True; auth (JWT + scope): True",
+    "last_run_at": "2026-07-22T18:14:35Z"
+  },
+  "C:C6": {
+    "battery": "C",
+    "id": "C6",
+    "label": "Bash / shell scripting",
+    "max_score": 3,
+    "streak": 0,
+    "complete": false,
+    "attempts": 3,
+    "history": [
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T17:18:34Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T18:14:45Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T19:07:44Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "no null-delimited iteration (would break on spaces/newlines)",
+    "last_run_at": "2026-07-22T19:07:44Z"
+  },
+  "C:C8": {
+    "battery": "C",
+    "id": "C8",
+    "label": "TTLCache vs vitest",
+    "max_score": 5,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 5,
+        "clean": true,
+        "at": "2026-07-22T17:18:47Z"
+      },
+      {
+        "score": 5,
+        "clean": true,
+        "at": "2026-07-22T18:14:58Z"
+      }
+    ],
+    "last_score": 5,
+    "last_clean": true,
+    "last_note": "vitest: 8 passed, 0 failed; all tests pass, no 'any'",
+    "last_run_at": "2026-07-22T18:14:58Z"
+  }
+}

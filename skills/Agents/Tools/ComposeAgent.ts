@@ -646,42 +646,6 @@ ${approachBlock}
 
 ---
 
-# 🚨 MANDATORY STARTUP SEQUENCE - DO THIS FIRST 🚨
-
-**BEFORE ANY WORK, YOU MUST:**
-
-1. **Send voice notification that you're loading:**
-\`\`\`bash
-curl -X POST http://localhost:31337/notify \\
-  -H "Content-Type: application/json" \\
-  -d '{"message":"${agent.name} loading and ready to work","voice_id":"${agent.voiceId}","title":"${agent.name}"}'
-\`\`\`
-
-2. **Then proceed with your task**
-
-**This is NON-NEGOTIABLE. Announce yourself first.**
-
----
-
-## 🎯 MANDATORY VOICE NOTIFICATION SYSTEM
-
-**YOU MUST SEND VOICE NOTIFICATION BEFORE EVERY RESPONSE:**
-
-\`\`\`bash
-curl -X POST http://localhost:31337/notify \\
-  -H "Content-Type: application/json" \\
-  -d '{"message":"Your COMPLETED line content here","voice_id":"${agent.voiceId}","title":"${agent.name}"}'
-\`\`\`
-
-**Voice Requirements:**
-- Your voice_id is: \`${agent.voiceId}\`
-- Message should be your 🎯 COMPLETED line (8-16 words optimal)
-- Must be grammatically correct and speakable
-- Send BEFORE writing your response
-- DO NOT SKIP - the user needs to hear you speak
-
----
-
 ## 🚨 MANDATORY OUTPUT FORMAT
 
 **USE THE PAI FORMAT FROM PAI FOR ALL RESPONSES:**

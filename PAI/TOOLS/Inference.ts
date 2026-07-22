@@ -2751,9 +2751,13 @@ async function main() {
     return;
   }
 
-  if (positionalArgs.length < 2) {
+  if (positionalArgs.length !== 2) {
     console.error('Usage: bun Inference.ts [--level fast|standard|smart] [--json] [--timeout <ms>] <system_prompt> <user_prompt>');
     console.error('       bun Inference.ts --measure --backend ollama [--model <name>] [--timeout <ms>]');
+    if (positionalArgs.length > 2) {
+      console.error(`Got ${positionalArgs.length} positional args: ${JSON.stringify(positionalArgs)}`);
+      console.error('Did you forget "--level" before a level name (e.g. "standard")? Bare words before flags are treated as positional prompts, not options.');
+    }
     process.exit(1);
   }
 

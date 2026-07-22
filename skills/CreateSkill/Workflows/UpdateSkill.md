@@ -2,17 +2,6 @@
 
 **Purpose:** Add workflows or modify an existing skill while maintaining canonical structure and TitleCase naming.
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:31337/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the UpdateSkill workflow in the CreateSkill skill to modify existing skill"}' \
-  > /dev/null 2>&1 &
-```
-
-Running the **UpdateSkill** workflow in the **CreateSkill** skill to modify existing skill...
-
 ---
 
 ## Step 1: Read the Authoritative Source
@@ -128,6 +117,13 @@ All files must use TitleCase:
 - [ ] Markdown body has `## Workflow Routing` section
 - [ ] All routes point to existing files
 - [ ] New workflow files have routing entries
+
+### Content Consistency (only if this skill has had 2+ edit passes this session)
+- [ ] Grep the touched files for the core terms/mechanisms just changed — flag any rationale stated more than once for the same fact
+- [ ] Check SKILL.md's Quick Reference/Gotchas for a summary line that predates a later detailed fix and may now contradict it — a stale summary is worse than no summary, since it reinforces the wrong default to a reader who stops reading early
+- [ ] If either check finds something, collapse to the single best-anchored instance (tied to a citation, incident, or `file:line` — not restated from memory) and point every other mention at it
+
+See `feedback_rapid_edit_bloat_signature.md` in memory for the full rationale — not restated here.
 
 ---
 

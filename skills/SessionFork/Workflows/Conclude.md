@@ -43,12 +43,6 @@ So the check is not "reread and judge if it feels vague." It is: **every `Refute
 ### Step 1 — Voice notification
 
 ```bash
-curl -s -X POST http://localhost:31337/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the Conclude workflow in the SessionFork skill"}' \
-  > /dev/null 2>&1 &
-```
-
 ### Step 2 — Read the fork tracking file
 
 The caller must already know `parent_slug` to locate this file (it was reported back at the end of `Fork`'s Step 6, or is recoverable by grepping `_forks/*.json` for `"fork_slug": "{fork_slug}"` under `MEMORY/WORK/` if lost). Load `MEMORY/WORK/{parent_slug}/_forks/{fork_slug}.json` and read `parent_slug`, `parent_session_id`, `parent_isa_path`, and `fork_reason` from its contents — don't re-derive any of these, the tracking file is authoritative per `Fork`'s "never re-derive downstream" rule.
@@ -56,6 +50,16 @@ The caller must already know `parent_slug` to locate this file (it was reported 
 ### Step 3 — Reconstruct the C/R/L fields from the fork's actual work
 
 Walk back through what the fork tried, in order. For each distinct approach: what was conjectured, what refuted it (or didn't), what was learned. Do not paraphrase away specifics — quote error messages, cite file:line, name the approach that failed and why, the same way an ISA Decisions entry would ("❌ DEAD END: Tried X — Y happened. Don't retry.").
+
+**Scope boundary: fork-internal work only, not fork-external backstory.**
+
+Every C/R/L field describes what happened *inside the fork* — the investigation, the attempts, the evidence. It does not re-narrate *why the fork was spawned*. That context already exists verbatim in the tracking JSON's `fork_reason` field and needs no prose restatement here.
+
+Concretely: if a sentence you're about to write describes the situation, question, or exchange that led to the fork being created — rather than something the fork itself did, tried, found, or produced — it is out of scope for this field. Cut it, or compress it to a bare pointer (`per fork_reason` / `see tracking JSON`) if some framing is unavoidable for the field to make sense standalone.
+
+**Litmus test per sentence:** "Did this happen inside the fork, or did it happen before the fork existed?" Before-the-fork content (the question that prompted it, prior exchanges, prior sessions' history) is out of scope. Inside-the-fork content (what was tried, what broke, what was learned, what changed) is in scope, unconditionally.
+
+**This is a source-material boundary, not a reader judgment** — and that distinction is what makes it safe where a reader-guessing fix would not be. A naive fix ("be less verbose, skip what the parent already knows") asks the same model writing the summary to also judge, in the moment, what a specific reader remembers — a self-graded compression call with no external check, the same mechanism that degrades quality in LLM-driven memory consolidation (see the "consolidation-loss" pole of summarization rot). This boundary sidesteps that risk entirely by not asking `Conclude` to reason about the reader at all: "is this sentence about the fork's own work, yes or no" is mechanical and checkable regardless of who eventually reads the artifact — that reader question is `Merge`'s job (see `Merge.md` Step 3a), not `Conclude`'s. A cold reader who wants the pre-fork backstory can still read `fork_reason` directly — it's preserved verbatim in the tracking JSON either way.
 
 ### Step 4 — Write the Conclude artifact
 
@@ -87,6 +91,14 @@ Re-read the written artifact field by field. For `Refuted by` and `Learned`, exp
 ### Step 6 — Update fork tracking status
 
 Set `"status": "concluded"` in the tracking JSON.
+
+### Step 7 — Tell the user what's next
+
+Concluding is not the end state the user is waiting for — the artifact still needs to reach wherever they actually want it (`Merge`), and only after that does the fork's lifecycle actually resolve. Don't stop at "concluded" as if the job is done:
+
+- State plainly that the artifact is written and validated, then say the next step is `Merge` (offer to run it now rather than waiting to be asked again — the common case is running both back to back).
+- If the user declines Merge or wants to hold off, that's fine — a `concluded` fork is stable, unlike an `open` one, so it's safe to leave as-is until they're ready.
+- Don't tell the user to exit the session yet — that guidance belongs after `Merge` actually runs (see `Merge.md` Step 7), since exiting before merging would strand the artifact unreintegrated.
 
 ## Failure modes
 

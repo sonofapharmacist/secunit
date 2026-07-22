@@ -4,15 +4,6 @@ description: "Drive interactive CLI tools through a real tmux TTY — solves isT
 effort: low
 ---
 
-## Voice Notification
-
-```bash
-curl -s -X POST http://localhost:31337/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the WORKFLOWNAME workflow in TmuxCliDriver to ACTION"}' \
-  > /dev/null 2>&1 &
-```
-
 # TmuxCliDriver
 
 Drives interactive CLI tools through a real tmux TTY. Solves the fundamental problem: Claude Code's Bash tool runs in a non-TTY context, so any CLI that checks `process.stdin.isTTY` (or the shell equivalent) exits immediately when driven via piped stdin. tmux creates a real pseudoterminal that the target process sees as a genuine terminal.

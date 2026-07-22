@@ -4,6 +4,20 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.5.1] — 2026-07-22
+
+### Fixed
+- **`Inference.ts` CLI silently dropped the query on malformed args.** A bare positional word before flags (e.g. a level name typed without its `--level` prefix) was swept into `positionalArgs` instead of erroring; with 3+ positional args the old length check (`< 2`) passed and only the first two were used, silently discarding the real query. Now errors loudly with a diagnostic hint when positional-arg count isn't exactly 2.
+- **`SessionFork`'s `Fork.md` handoff defaulted to `claude --continue --fork-session`, which can silently fork the wrong session.** `--continue` resumes the most recent conversation *in the current directory*, not a specific session — with concurrent sessions in the same working directory, it forks an unrelated conversation with no error. Default is now `claude --resume {parent_session_id} --fork-session`, using the session id already captured in the fork's tracking file.
+- **`SessionFork`'s `Fork.md` Step 5 treated the native fork invocation as something the assistant could attempt and retry on failure.** It cannot — `--fork-session` is a top-level shell flag that launches a new `claude` process, and nested `claude` invocation is blocked. Step 5 now correctly frames this as a user handoff: the assistant prepares the tracking file and hands the exact command to the user to run interactively.
+
+### Added
+- **`SessionFork`'s `Merge` workflow gained same-parent delta-mode reintegration.** When `Merge` runs in the exact same process as the fork's recorded parent session (a mechanical `$CLAUDE_CODE_SESSION_ID` comparison against the tracking file's `parent_session_id`, never a guess), it surfaces a compressed delta — only what's newly true — instead of restating context the parent session already holds. Falls back to full-verbose on any ambiguity or mismatch; the fallback direction is fixed, never a coin flip. `Conclude`'s full anchored artifact is unchanged and always written to disk regardless of reader mode.
+- **`SessionFork`'s `Conclude` workflow gained a scope-boundary rule.** C/R/L (Conjectured/Refuted-by/Learned/Criterion-now) fields now exclude pre-fork backstory — content describing why the fork was spawned rather than what happened inside it — since that context already exists verbatim in the fork's tracking JSON. This is a mechanical content-scope test, not a reader-awareness guess, so it stays safe under the same class of risk that makes naive "be less verbose" summarization fixes unreliable.
+- **`CreateSkill`'s `UpdateSkill` workflow gained a Content Consistency checklist item**, triggered after 2+ edit passes to the same file(s) in one session — checks for near-duplicate rationale and stale summary lines left standing next to a later, corrected detailed instruction.
+
+---
+
 ## [0.5.0] — 2026-07-21
 
 ### Added

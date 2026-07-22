@@ -1283,7 +1283,7 @@
     "voiceClone": ""
   },
   "pai": {
-    "version": "0.5.0",
+    "version": "0.5.1",
     "algorithmVersion": "7.1.1",
     "repoUrl": "https://github.com/sonofapharmacist/secunit"
   },
@@ -1357,6 +1357,5 @@
         "discord"
       ]
     }
-  },
-  "effortLevel": "xhigh"
+  }
 }

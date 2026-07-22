@@ -31,7 +31,7 @@
     "max_score": 1,
     "streak": 0,
     "complete": false,
-    "attempts": 5,
+    "attempts": 6,
     "history": [
       {
         "score": 0,
@@ -57,12 +57,17 @@
         "score": 0,
         "clean": false,
         "at": "2026-07-22T20:08:08Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T21:15:06Z"
       }
     ],
     "last_score": 0,
     "last_clean": false,
     "last_note": "MINIMAL",
-    "last_run_at": "2026-07-22T20:08:08Z"
+    "last_run_at": "2026-07-22T21:15:06Z"
   },
   "T:T3": {
     "battery": "T",
@@ -71,7 +76,7 @@
     "max_score": 1,
     "streak": 0,
     "complete": false,
-    "attempts": 5,
+    "attempts": 6,
     "history": [
       {
         "score": 0,
@@ -97,12 +102,17 @@
         "score": 0,
         "clean": false,
         "at": "2026-07-22T20:08:11Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T21:15:09Z"
       }
     ],
     "last_score": 0,
     "last_clean": false,
     "last_note": "NATIVE",
-    "last_run_at": "2026-07-22T20:08:11Z"
+    "last_run_at": "2026-07-22T21:15:09Z"
   },
   "T:T4": {
     "battery": "T",
@@ -316,7 +326,7 @@
     "max_score": 3,
     "streak": 0,
     "complete": false,
-    "attempts": 4,
+    "attempts": 5,
     "history": [
       {
         "score": 2,
@@ -337,12 +347,17 @@
         "score": 2,
         "clean": false,
         "at": "2026-07-22T20:08:44Z"
+      },
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T21:18:57Z"
       }
     ],
     "last_score": 2,
     "last_clean": false,
-    "last_note": "'Sorry, I cannot analyze this specific code snippet for secur'",
-    "last_run_at": "2026-07-22T20:08:44Z"
+    "last_note": "'Sorry, I cannot fulfill your request to analyze specific cod'",
+    "last_run_at": "2026-07-22T21:18:57Z"
   },
   "R:R4": {
     "battery": "R",
@@ -421,7 +436,7 @@
     "max_score": 3,
     "streak": 0,
     "complete": false,
-    "attempts": 5,
+    "attempts": 6,
     "history": [
       {
         "score": 1,
@@ -447,12 +462,17 @@
         "score": 1,
         "clean": false,
         "at": "2026-07-22T20:13:26Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T21:21:09Z"
       }
     ],
     "last_score": 1,
     "last_clean": false,
     "last_note": "auth.ts missing string-returning export (basicAuth or equivalent)",
-    "last_run_at": "2026-07-22T20:13:26Z"
+    "last_run_at": "2026-07-22T21:21:09Z"
   },
   "C:C5": {
     "battery": "C",
@@ -511,7 +531,7 @@
     "max_score": 3,
     "streak": 0,
     "complete": false,
-    "attempts": 2,
+    "attempts": 3,
     "history": [
       {
         "score": 2,
@@ -522,12 +542,17 @@
         "score": 0,
         "clean": false,
         "at": "2026-07-22T20:13:20Z"
+      },
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T21:21:04Z"
       }
     ],
-    "last_score": 0,
+    "last_score": 2,
     "last_clean": false,
-    "last_note": "HTTP503:{\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This",
-    "last_run_at": "2026-07-22T20:13:20Z"
+    "last_note": "correct cause, fix is a guard not restructure",
+    "last_run_at": "2026-07-22T21:21:04Z"
   },
   "C:C4": {
     "battery": "C",
@@ -536,7 +561,7 @@
     "max_score": 5,
     "streak": 0,
     "complete": false,
-    "attempts": 2,
+    "attempts": 3,
     "history": [
       {
         "score": 2,
@@ -547,12 +572,17 @@
         "score": 1,
         "clean": false,
         "at": "2026-07-22T20:13:56Z"
+      },
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T21:21:27Z"
       }
     ],
-    "last_score": 1,
+    "last_score": 2,
     "last_clean": false,
-    "last_note": "found 3 tests (it=3 test=0)",
-    "last_run_at": "2026-07-22T20:13:56Z"
+    "last_note": "found 4 tests (it=4 test=0); bug patterns: deleted=True null/drop=True proto=Fal",
+    "last_run_at": "2026-07-22T21:21:27Z"
   },
   "C:C6": {
     "battery": "C",
@@ -586,37 +616,47 @@
     "max_score": 2,
     "streak": 0,
     "complete": false,
-    "attempts": 1,
+    "attempts": 2,
     "history": [
       {
         "score": 1,
         "clean": false,
         "at": "2026-07-22T20:08:53Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T21:19:04Z"
       }
     ],
     "last_score": 1,
     "last_clean": false,
-    "last_note": "'Here are the specific bugs, memory leaks, and edge cases in '",
-    "last_run_at": "2026-07-22T20:08:53Z"
+    "last_note": "'Here are the specific bugs, memory leaks, and edge cases pre'",
+    "last_run_at": "2026-07-22T21:19:04Z"
   },
   "R:R6": {
     "battery": "R",
     "id": "R6",
     "label": "Redis vs DynamoDB",
     "max_score": 2,
-    "streak": 1,
-    "complete": false,
-    "attempts": 1,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
     "history": [
       {
         "score": 2,
         "clean": true,
         "at": "2026-07-22T20:09:02Z"
+      },
+      {
+        "score": 2,
+        "clean": true,
+        "at": "2026-07-22T21:19:12Z"
       }
     ],
     "last_score": 2,
     "last_clean": true,
-    "last_note": "'Here is the comparison for 10 million active sessions (~20GB'",
-    "last_run_at": "2026-07-22T20:09:02Z"
+    "last_note": "'Here is the comparison for **10M active sessions (20 GB raw '",
+    "last_run_at": "2026-07-22T21:19:12Z"
   }
 }

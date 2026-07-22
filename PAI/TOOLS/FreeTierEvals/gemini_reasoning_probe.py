@@ -257,16 +257,19 @@ MAX_SCORE_TOTAL = sum(t["max_score"] for t in TESTS)  # 17
 NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite"}
 
 # 3.6 Flash specifically: even at thinkingBudget:1 (the minimum legal value), thoughtsTokenCount
-# ranged 6-218 in spot checks and silently eats the response budget — small max_tokens values
-# come back MAX_TOKENS with empty content. 3.5 Flash-Lite showed no such overhead with
-# thinkingConfig omitted entirely (scored 46/53 clean), so it's not given this treatment.
+# ranged 6-2188 in spot checks (a C-battery test-gen prompt hit 2188, well above the original
+# 1024 floor) and silently eats the response budget — under-provisioned calls come back
+# truncated at finishReason:STOP with a fraction of the expected output, not even a diagnosable
+# MAX_TOKENS. 3.5 Flash-Lite showed no such overhead with thinkingConfig omitted entirely
+# (scored 46/53 clean), so it's not given this treatment. Overhead is additive to the requested
+# budget, not a flat floor — must pad max_tokens by the reserve, not max() against it.
 ALWAYS_THINKS_MODELS = {"gemini-3.6-flash"}
-THINKING_OVERHEAD_FLOOR = 1024
+THINKING_OVERHEAD_RESERVE = 3000
 
 def call_gemini(model: str, api_key: str, prompt: str, max_tokens: int, enable_thinking: bool) -> tuple[str, float, str]:
     url = f"{BASE}/{model}:generateContent?key={api_key}"
     if model in ALWAYS_THINKS_MODELS:
-        gen_config = {"maxOutputTokens": max(max_tokens, THINKING_OVERHEAD_FLOOR), "temperature": 0.1,
+        gen_config = {"maxOutputTokens": max_tokens + THINKING_OVERHEAD_RESERVE, "temperature": 0.1,
                       "thinkingConfig": {"thinkingBudget": 1}}
     else:
         gen_config = {"maxOutputTokens": max_tokens, "temperature": 0.1}

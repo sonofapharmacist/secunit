@@ -723,6 +723,18 @@ const SANITIZATIONS: Sanitization[] = [
       [/-home-realuser/g, '-home-<username>'],
     ],
   },
+  {
+    // sbom.json contains absolute file paths in evidence.files (cdxgen
+    // resolves from the live tree). Scrub usernames and home-dir paths so
+    // the identifier gate accepts the file.
+    rel: 'sbom.json',
+    replacements: [
+      [/100\.126\.185\.104/g, '127.0.0.1'],
+      [/100\.124\.228\.50/g, '127.0.0.1'],
+      [/\/home\/realuser\//g, '/home/<username>/'],
+      [/-home-realuser/g, '-home-<username>'],
+    ],
+  },
 ]
 
 function sanitize() {
@@ -1086,13 +1098,18 @@ models:
 
 function generateSBOM(version: string): boolean {
   log('\n📋 Generating SBOM')
-  // Scan the staged PAI/TOOLS dir — post-strip, so pipeline-monitor-ui and
-  // other internal tooling are already excluded from the dep surface.
-  const toolsStage = join(STAGE_ROOT, 'PAI', 'TOOLS')
+  // CRITICAL: Run cdxgen against the LIVE PAI/TOOLS tree (which has node_modules),
+  // NOT the staged tree. The strip step removes node_modules to keep the release
+  // small — without it, cdxgen's npm resolver finds the declared package.json
+  // dependencies but cannot enumerate the installed graph, producing an SBOM
+  // with zero components (CVE database coverage effectively empty for the
+  // dependencies the release actually ships). Generating pre-strip and copying
+  // the file into the staged tree decouples SBOM accuracy from release size.
+  const toolsLive = join(PAI_SRC, 'TOOLS')
   const outFile = join(STAGE_ROOT, 'sbom.json')
   const r = spawnSync(
     'bunx',
-    ['--bun', '@cyclonedx/cdxgen', '-p', toolsStage, '-o', outFile,
+    ['--bun', '@cyclonedx/cdxgen', '-p', toolsLive, '-o', outFile,
      '--type', 'npm', '--spec-version', '1.5'],
     { encoding: 'utf-8', stdio: 'pipe' }
   )
@@ -1101,7 +1118,7 @@ function generateSBOM(version: string): boolean {
   // written correctly. Non-zero exit doesn't mean the file is bad — verify
   // the file itself rather than trusting the process exit code.
   if (!existsSync(outFile)) {
-    log('  ⚠ SBOM generation failed — release continues without sbom.json')
+    log('  [FAIL] SBOM file not written by cdxgen — release blocked, vuln scan cannot run')
     if (VERBOSE && r.stderr?.trim()) log(`  [v] ${r.stderr.trim()}`)
     return false
   }
@@ -1109,12 +1126,12 @@ function generateSBOM(version: string): boolean {
   try {
     sbom = JSON.parse(readFileSync(outFile, 'utf-8'))
   } catch {
-    log('  ⚠ SBOM file is not valid JSON — release continues without sbom.json')
+    log('  [FAIL] SBOM file is not valid JSON — release blocked, vuln scan cannot run')
     rm(outFile)
     return false
   }
   if (!Array.isArray(sbom.components) || sbom.components.length === 0) {
-    log('  ⚠ SBOM has no components — release continues without sbom.json')
+    log('  [FAIL] SBOM has zero components — release blocked, vuln scan cannot run')
     rm(outFile)
     return false
   }
@@ -1189,6 +1206,18 @@ async function main() {
     return
   }
 
+  // SBOM must run BEFORE strip — strip removes PAI/TOOLS/node_modules, which
+  // cdxgen needs to enumerate the installed dependency graph. Running it here
+  // (against the staged tree, before strip) means the SBOM reflects the real
+  // npm install state, not the declared-but-uninstalled package.json.
+  const sbomOk = generateSBOM(version)
+  if (!sbomOk) {
+    fail('\nRelease gate FAILED — SBOM generation did not produce a valid sbom.json')
+    fail('  Grype vuln scan cannot run without an SBOM. Blocked from pushing.')
+    log(`\nStaged output preserved for inspection: ${STAGE_ROOT}`)
+    process.exit(1)
+  }
+
   strip()
   sanitize()
 
@@ -1208,9 +1237,7 @@ async function main() {
   log(`\n✅ All gates passed`)
   log(`   Staged output: ${STAGE_ROOT}`)
 
-  const sbomOk = generateSBOM(version)
-  const grypeOk = sbomOk ? runGrype() : true
-
+  const grypeOk = runGrype()
   if (!grypeOk) {
     log(`\nStaged output preserved for inspection: ${STAGE_ROOT}`)
     process.exit(1)

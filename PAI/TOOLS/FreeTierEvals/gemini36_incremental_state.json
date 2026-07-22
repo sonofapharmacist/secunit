@@ -31,7 +31,7 @@
     "max_score": 1,
     "streak": 0,
     "complete": false,
-    "attempts": 4,
+    "attempts": 5,
     "history": [
       {
         "score": 0,
@@ -52,12 +52,17 @@
         "score": 0,
         "clean": false,
         "at": "2026-07-22T19:06:07Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T20:08:08Z"
       }
     ],
     "last_score": 0,
     "last_clean": false,
     "last_note": "MINIMAL",
-    "last_run_at": "2026-07-22T19:06:07Z"
+    "last_run_at": "2026-07-22T20:08:08Z"
   },
   "T:T3": {
     "battery": "T",
@@ -66,7 +71,7 @@
     "max_score": 1,
     "streak": 0,
     "complete": false,
-    "attempts": 4,
+    "attempts": 5,
     "history": [
       {
         "score": 0,
@@ -87,12 +92,17 @@
         "score": 0,
         "clean": false,
         "at": "2026-07-22T19:06:09Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T20:08:11Z"
       }
     ],
     "last_score": 0,
     "last_clean": false,
     "last_note": "NATIVE",
-    "last_run_at": "2026-07-22T19:06:09Z"
+    "last_run_at": "2026-07-22T20:08:11Z"
   },
   "T:T4": {
     "battery": "T",
@@ -306,7 +316,7 @@
     "max_score": 3,
     "streak": 0,
     "complete": false,
-    "attempts": 3,
+    "attempts": 4,
     "history": [
       {
         "score": 2,
@@ -322,12 +332,17 @@
         "score": 2,
         "clean": false,
         "at": "2026-07-22T19:06:26Z"
+      },
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T20:08:44Z"
       }
     ],
     "last_score": 2,
     "last_clean": false,
-    "last_note": "'I cannot analyze this specific code snippet for security vul'",
-    "last_run_at": "2026-07-22T19:06:26Z"
+    "last_note": "'Sorry, I cannot analyze this specific code snippet for secur'",
+    "last_run_at": "2026-07-22T20:08:44Z"
   },
   "R:R4": {
     "battery": "R",
@@ -359,74 +374,14 @@
     "last_note": "'Here is the step-by-step solution to the logic puzzle:\\n\\n### '",
     "last_run_at": "2026-07-22T19:06:30Z"
   },
-  "R:R5": {
-    "battery": "R",
-    "id": "R5",
-    "label": "Rate limiter bugs",
-    "max_score": 2,
-    "streak": 0,
-    "complete": false,
-    "attempts": 3,
-    "history": [
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T17:08:17Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T18:09:55Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T19:06:40Z"
-      }
-    ],
-    "last_score": 1,
-    "last_clean": false,
-    "last_note": "'Here are the specific bugs, edge cases, and architectural is'",
-    "last_run_at": "2026-07-22T19:06:40Z"
-  },
-  "R:R6": {
-    "battery": "R",
-    "id": "R6",
-    "label": "Redis vs DynamoDB",
-    "max_score": 2,
-    "streak": 0,
-    "complete": false,
-    "attempts": 3,
-    "history": [
-      {
-        "score": 2,
-        "clean": true,
-        "at": "2026-07-22T17:08:26Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T18:10:04Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T19:06:48Z"
-      }
-    ],
-    "last_score": 1,
-    "last_clean": false,
-    "last_note": "'### Comparison: Redis Cluster vs. DynamoDB (20 GB total data'",
-    "last_run_at": "2026-07-22T19:06:48Z"
-  },
   "C:C1": {
     "battery": "C",
     "id": "C1",
     "label": "TS-strict type narrowing",
     "max_score": 3,
-    "streak": 1,
-    "complete": false,
-    "attempts": 4,
+    "streak": 2,
+    "complete": true,
+    "attempts": 5,
     "history": [
       {
         "score": 0,
@@ -447,51 +402,26 @@
         "score": 3,
         "clean": true,
         "at": "2026-07-22T19:07:00Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T20:02:22Z"
       }
     ],
     "last_score": 3,
     "last_clean": true,
     "last_note": "reject paths: missing=True malformed=True expired=True; never exhaustive check p",
-    "last_run_at": "2026-07-22T19:07:00Z"
-  },
-  "C:C2": {
-    "battery": "C",
-    "id": "C2",
-    "label": "Debug from stack trace + repro",
-    "max_score": 3,
-    "streak": 0,
-    "complete": false,
-    "attempts": 3,
-    "history": [
-      {
-        "score": 0,
-        "clean": false,
-        "at": "2026-07-22T17:17:55Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T18:14:03Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T19:07:13Z"
-      }
-    ],
-    "last_score": 1,
-    "last_clean": false,
-    "last_note": "identifies bug but wrong cause",
-    "last_run_at": "2026-07-22T19:07:13Z"
+    "last_run_at": "2026-07-22T20:02:22Z"
   },
   "C:C3": {
     "battery": "C",
     "id": "C3",
     "label": "Multi-file refactor",
     "max_score": 3,
-    "streak": 1,
+    "streak": 0,
     "complete": false,
-    "attempts": 3,
+    "attempts": 5,
     "history": [
       {
         "score": 1,
@@ -507,42 +437,22 @@
         "score": 3,
         "clean": true,
         "at": "2026-07-22T19:07:18Z"
-      }
-    ],
-    "last_score": 3,
-    "last_clean": true,
-    "last_note": "all 3 files correct, signatures preserved, Buffer only in auth.ts; clean module ",
-    "last_run_at": "2026-07-22T19:07:18Z"
-  },
-  "C:C4": {
-    "battery": "C",
-    "id": "C4",
-    "label": "Test generation",
-    "max_score": 5,
-    "streak": 0,
-    "complete": false,
-    "attempts": 3,
-    "history": [
-      {
-        "score": 2,
-        "clean": false,
-        "at": "2026-07-22T17:18:13Z"
       },
       {
         "score": 1,
         "clean": false,
-        "at": "2026-07-22T18:14:24Z"
+        "at": "2026-07-22T20:05:41Z"
       },
       {
         "score": 1,
         "clean": false,
-        "at": "2026-07-22T19:07:34Z"
+        "at": "2026-07-22T20:13:26Z"
       }
     ],
     "last_score": 1,
     "last_clean": false,
-    "last_note": "found 1 tests (it=1 test=0)",
-    "last_run_at": "2026-07-22T19:07:34Z"
+    "last_note": "auth.ts missing string-returning export (basicAuth or equivalent)",
+    "last_run_at": "2026-07-22T20:13:26Z"
   },
   "C:C5": {
     "battery": "C",
@@ -569,36 +479,6 @@
     "last_note": "secret handling (no full key/hash in list): True; auth (JWT + scope): True",
     "last_run_at": "2026-07-22T18:14:35Z"
   },
-  "C:C6": {
-    "battery": "C",
-    "id": "C6",
-    "label": "Bash / shell scripting",
-    "max_score": 3,
-    "streak": 0,
-    "complete": false,
-    "attempts": 3,
-    "history": [
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T17:18:34Z"
-      },
-      {
-        "score": 3,
-        "clean": true,
-        "at": "2026-07-22T18:14:45Z"
-      },
-      {
-        "score": 1,
-        "clean": false,
-        "at": "2026-07-22T19:07:44Z"
-      }
-    ],
-    "last_score": 1,
-    "last_clean": false,
-    "last_note": "no null-delimited iteration (would break on spaces/newlines)",
-    "last_run_at": "2026-07-22T19:07:44Z"
-  },
   "C:C8": {
     "battery": "C",
     "id": "C8",
@@ -623,5 +503,120 @@
     "last_clean": true,
     "last_note": "vitest: 8 passed, 0 failed; all tests pass, no 'any'",
     "last_run_at": "2026-07-22T18:14:58Z"
+  },
+  "C:C2": {
+    "battery": "C",
+    "id": "C2",
+    "label": "Debug from stack trace + repro",
+    "max_score": 3,
+    "streak": 0,
+    "complete": false,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T20:05:35Z"
+      },
+      {
+        "score": 0,
+        "clean": false,
+        "at": "2026-07-22T20:13:20Z"
+      }
+    ],
+    "last_score": 0,
+    "last_clean": false,
+    "last_note": "HTTP503:{\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"This",
+    "last_run_at": "2026-07-22T20:13:20Z"
+  },
+  "C:C4": {
+    "battery": "C",
+    "id": "C4",
+    "label": "Test generation",
+    "max_score": 5,
+    "streak": 0,
+    "complete": false,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 2,
+        "clean": false,
+        "at": "2026-07-22T20:05:53Z"
+      },
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T20:13:56Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "found 3 tests (it=3 test=0)",
+    "last_run_at": "2026-07-22T20:13:56Z"
+  },
+  "C:C6": {
+    "battery": "C",
+    "id": "C6",
+    "label": "Bash / shell scripting",
+    "max_score": 3,
+    "streak": 2,
+    "complete": true,
+    "attempts": 2,
+    "history": [
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T20:06:08Z"
+      },
+      {
+        "score": 3,
+        "clean": true,
+        "at": "2026-07-22T20:14:06Z"
+      }
+    ],
+    "last_score": 3,
+    "last_clean": true,
+    "last_note": "null-delimited rotation + trap or atomic write",
+    "last_run_at": "2026-07-22T20:14:06Z"
+  },
+  "R:R5": {
+    "battery": "R",
+    "id": "R5",
+    "label": "Rate limiter bugs",
+    "max_score": 2,
+    "streak": 0,
+    "complete": false,
+    "attempts": 1,
+    "history": [
+      {
+        "score": 1,
+        "clean": false,
+        "at": "2026-07-22T20:08:53Z"
+      }
+    ],
+    "last_score": 1,
+    "last_clean": false,
+    "last_note": "'Here are the specific bugs, memory leaks, and edge cases in '",
+    "last_run_at": "2026-07-22T20:08:53Z"
+  },
+  "R:R6": {
+    "battery": "R",
+    "id": "R6",
+    "label": "Redis vs DynamoDB",
+    "max_score": 2,
+    "streak": 1,
+    "complete": false,
+    "attempts": 1,
+    "history": [
+      {
+        "score": 2,
+        "clean": true,
+        "at": "2026-07-22T20:09:02Z"
+      }
+    ],
+    "last_score": 2,
+    "last_clean": true,
+    "last_note": "'Here is the comparison for 10 million active sessions (~20GB'",
+    "last_run_at": "2026-07-22T20:09:02Z"
   }
 }

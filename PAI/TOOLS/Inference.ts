@@ -2382,6 +2382,15 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
     }
   }
 
+  // fast-level escalation off a failed local-first attempt targets sonnet,
+  // not haiku (benched 2026-07-22: haiku intermittently returns prose instead
+  // of JSON on the mode-classifier prompt — 40/40 clean on local, 0/10 on
+  // sonnet, ~1/10 malformed on haiku, same prompt). Local-first already covers
+  // the cost-sensitive common case; this path only fires when local itself is
+  // down, so reliability outweighs the haiku cost saving here.
+  const claudeLevel: InferenceLevel = (localEscalated && level === 'fast') ? 'standard' : level;
+  const claudeOptions: InferenceOptions = claudeLevel === level ? effectiveOptions : { ...effectiveOptions, level: claudeLevel };
+
   // Fable 5 path — API direct, not the Claude CLI subprocess. The CLI path
   // scrubs ANTHROPIC_API_KEY to enforce subscription billing and doesn't
   // expose output_config.effort or the server-side-fallback beta, both of
@@ -2395,7 +2404,7 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
   }
 
   // Claude path
-  const result = await inferenceClaudeSubprocess(effectiveOptions);
+  const result = await inferenceClaudeSubprocess(claudeOptions);
 
   // Usage-limit fallback: Claude → Ollama
   // Skipped when shell is in M3/GLM fallback mode (2026-06-18): the user has
@@ -2412,17 +2421,17 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
       console.error(`[Inference] Claude usage limit — Ollama fallback skipped (shell mode: ${shellModeForFallback}, M3/GLM IS the fallback)`);
     } else {
       const { fallbackEnabled: cfgEnabled, fallbackModels, defaultModel } = await getConfig();
-      const fallbackEnabled = effectiveOptions.fallbackToOllama ?? cfgEnabled;
+      const fallbackEnabled = claudeOptions.fallbackToOllama ?? cfgEnabled;
       if (fallbackEnabled) {
         if (!canUseLocal) {
           console.error(`[Inference] Claude usage limit — Ollama fallback skipped (image attachments unsupported in Ollama text path)`);
         } else {
-          const fallbackModel = effectiveOptions.model ?? fallbackModels[level] ?? defaultModel;
-          console.error(`[Inference] Claude usage limit — falling back to Ollama (level: ${level}, model: ${fallbackModel})`);
+          const fallbackModel = claudeOptions.model ?? fallbackModels[claudeLevel] ?? defaultModel;
+          console.error(`[Inference] Claude usage limit — falling back to Ollama (level: ${claudeLevel}, model: ${fallbackModel})`);
           // Usage-limit: bypass warmth — cold Ollama is better than no response when Claude is quota-blocked.
-          const fallbackResult = await inferenceOllama({ ...effectiveOptions, model: fallbackModel, skipWarmthCheck: true });
+          const fallbackResult = await inferenceOllama({ ...claudeOptions, model: fallbackModel, skipWarmthCheck: true });
           const finalFallback = { ...fallbackResult, fallbackUsed: true, fallbackModel };
-          logInferenceCall('local', finalFallback, level, effectiveOptions.taskType);
+          logInferenceCall('local', finalFallback, claudeLevel, claudeOptions.taskType);
           return finalFallback;
         }
       }
@@ -2432,7 +2441,7 @@ async function _inferenceCore(options: InferenceOptions): Promise<InferenceResul
   const finalResult = localEscalated
     ? { ...result, escalatedFromLocal: true, ...(localEscalatedReason ? { fallbackReason: localEscalatedReason } : {}) }
     : result;
-  logInferenceCall('claude', finalResult, level, effectiveOptions.taskType);
+  logInferenceCall('claude', finalResult, claudeLevel, claudeOptions.taskType);
   return finalResult;
 }
 

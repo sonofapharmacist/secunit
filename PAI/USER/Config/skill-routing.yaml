@@ -1,5 +1,5 @@
 version: 1
-decision_date: 2026-07-22
+decision_date: 2026-07-23
 description: >
   Skill-level routing preferences. Each skill declares its preferred inference
   tier

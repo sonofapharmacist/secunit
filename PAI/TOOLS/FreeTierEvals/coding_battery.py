@@ -721,14 +721,53 @@ Constraints:
 - Add minimal type annotations to make the new module boundary self-documenting.'''
 
 
+# Fixed 2026-07-22: the original score_c3 assigned each fenced code block to a file by regex-
+# scanning raw text for "a.ts"/"b.ts"/"c.ts"/"auth.ts" comment markers immediately before/inside
+# the fence. That silently failed whenever a model labeled files with a markdown header
+# (`### \`auth.ts\``) instead of an in-fence comment (`// auth.ts`) — confirmed directly against
+# Gemini 3.6 Flash: 5/6 attempts scored 1/3 ("missing string-returning export") despite emitting
+# a correct, textbook refactor, purely because of header-vs-comment formatting. Root cause is the
+# same regex family (a_section/b_section/c_section/auth_section) across every extraction site.
+# This is at least the second confirmed trigger — pai-model-tiers-unified-2026-06.md documents
+# Qwen3.5-397B hitting the same scorer via prose-before-fence on 2026-06-30 — so it's fixed here
+# properly (parse fences directly, associate by nearest preceding filename mention) rather than
+# patched around one more time.
+def _extract_c3_file_sections(response: str) -> dict[str, str]:
+    """Map filename -> fenced code content, regardless of comment-style or markdown-header labeling.
+
+    Strategy: find every fenced code block. For each, first check for an in-fence leading comment
+    (`// x.ts`) — the strongest signal. If absent, fall back to the nearest `x.ts` filename mention
+    in the text between the previous fence and this one (covers markdown headers, prose labels,
+    "Here is a.ts:" sentences — anything that names the file before showing its code).
+    """
+    fences = list(re.finditer(r'```\w*\n(.*?)```', response, re.S))
+    sections: dict[str, str] = {}
+    last_end = 0
+    for fence in fences:
+        body = fence.group(1)
+        preceding_text = response[last_end:fence.start()]
+        filename = None
+        m = re.match(r'\s*//\s*(\w+\.ts)', body)
+        if m:
+            filename = m.group(1)
+        else:
+            mentions = re.findall(r'\b(\w+\.ts)\b', preceding_text)
+            if mentions:
+                filename = mentions[-1]
+        if filename:
+            sections[filename] = body
+        last_end = fence.end()
+    return sections
+
+
 def score_c3(response: str) -> tuple[int, list[str]]:
     notes = []
     r = response
     score = 0
 
-    # Look for auth.ts
-    has_auth_ts = bool(re.search(r'auth\.ts', r))
-    has_three_files = bool(re.search(r'a\.ts', r)) and bool(re.search(r'b\.ts', r)) and bool(re.search(r'c\.ts', r))
+    sections = _extract_c3_file_sections(r)
+    has_auth_ts = "auth.ts" in sections
+    has_three_files = all(f in sections for f in ("a.ts", "b.ts", "c.ts"))
 
     if not has_auth_ts or not has_three_files:
         notes.append("missing auth.ts or one of the 3 files")
@@ -751,27 +790,14 @@ def score_c3(response: str) -> tuple[int, list[str]]:
         notes.append("function c() not preserved (and c.ts not declared unchanged)")
         return 0, notes
 
-    # Check Buffer only in auth.ts
-    # Split response into sections by filename
-    sections = re.split(r'//\s*(\w+\.ts)|```\w*\n?//\s*(\w+\.ts)', r)
+    # Check Buffer only in auth.ts — now checking each fence's own body, not a regex-guessed span.
+    a_section = sections["a.ts"]
+    b_section = sections["b.ts"]
     buffer_in_a_or_b = False
-    for section in sections:
-        if not section:
-            continue
-        # crude: check if 'a.ts' or 'b.ts' section contains Buffer
-        if re.search(r'\bBuffer\.from', section):
-            # need to know which file this section belongs to
-            pass
-
-    # Simpler: look for explicit "a.ts" or "b.ts" headers with Buffer
-    a_section = re.search(r'(?:^|\n)(?://\s*)?a\.ts[\s\S]+?(?=(?://\s*)?b\.ts|```\s*$)', r, re.M)
-    b_section = re.search(r'(?:^|\n)(?://\s*)?b\.ts[\s\S]+?(?=(?://\s*)?c\.ts|```\s*$)', r, re.M)
-    c_section = re.search(r'(?:^|\n)(?://\s*)?c\.ts[\s\S]+?(?=(?://\s*)?$|```\s*$)', r, re.M)
-
-    if a_section and 'Buffer' in a_section.group():
+    if 'Buffer' in a_section:
         buffer_in_a_or_b = True
         notes.append("Buffer leaked to a.ts")
-    if b_section and 'Buffer' in b_section.group():
+    if 'Buffer' in b_section:
         buffer_in_a_or_b = True
         notes.append("Buffer leaked to b.ts")
 
@@ -779,25 +805,20 @@ def score_c3(response: str) -> tuple[int, list[str]]:
         return 1, notes
 
     # Check basicAuth export in auth.ts
-    auth_section = re.search(r'(?:^|\n)(?://\s*)?auth\.ts[\s\S]+?(?=(?://\s*)?a\.ts|```\s*$)', r, re.M)
-    # Look for any function that returns a string + is exported (basicAuth, buildAuth, createAuthHeader, etc.)
+    auth_text = sections["auth.ts"]
     auth_has_exported_func = False
-    if auth_section:
-        auth_text = auth_section.group()
-        if re.search(r'export\s+(?:function|const)\s+\w+', auth_text):
-            # Has an exported function/const — check it returns a string
-            if re.search(r':\s*string\b|=>\s*string\b', auth_text):
-                auth_has_exported_func = True
-        # Fall back to the exact basicAuth name
-        if 'basicAuth' in auth_text:
+    if re.search(r'export\s+(?:function|const)\s+\w+', auth_text):
+        if re.search(r':\s*string\b|=>\s*string\b', auth_text):
             auth_has_exported_func = True
+    if 'basicAuth' in auth_text:
+        auth_has_exported_func = True
 
-    if not auth_section or not auth_has_exported_func:
+    if not auth_has_exported_func:
         notes.append("auth.ts missing string-returning export (basicAuth or equivalent)")
         return 1, notes
 
     # Check a.ts uses the auth helper (any import from ./auth)
-    if a_section and not re.search(r'from\s+["\']\./auth["\']', a_section.group()):
+    if not re.search(r'from\s+["\']\./auth["\']', a_section):
         notes.append("a.ts doesn't import from ./auth")
         return 1, notes
 

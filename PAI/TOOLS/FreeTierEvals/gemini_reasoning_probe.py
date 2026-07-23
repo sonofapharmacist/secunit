@@ -208,10 +208,21 @@ TESTS = [
         ),
     },
     {
+        # Fixed 2026-07-22: original first criterion checked for an off-by-one bug that does not
+        # exist in this code — verified by direct simulation, the counter correctly blocks at
+        # exactly the 11th request every time (`counts[userId] <= limit` after pre-increment is
+        # exact, no fencepost error). The code's real first-class bug is the fixed-window boundary
+        # burst: a client can send `limit` requests just before a window resets and another `limit`
+        # requests just after, getting up to 2x the intended rate in a short span. Rewrote the first
+        # criterion to check for that instead — code sample unchanged (preserves comparability with
+        # every model's historical R5 score), only the scoring criterion changed to match reality.
         "id": "R5", "label": "Rate limiter bugs", "max_tokens": 1500, "max_score": 2,
+        # Keyword sets deliberately disjoint — "window reset"/"window expir" pulled from criterion 2
+        # since a genuine boundary-burst answer legitimately uses that phrase too, which was letting
+        # a criterion-1-only response accidentally also trip criterion 2 (verified via synthetic test).
         "scorer": lambda r: sum([
-            1 if any(x in r.lower() for x in ["off-by-one","off by one","11 request","allows 11","limit + 1","exceeds limit","one extra","11 calls"]) else 0,
-            1 if any(x in r.lower() for x in ["memory leak","unbounded","never clean","never delet","grow indefin","accumulate","no cleanup","stale entry","not removed","no reset","window reset","not reset","window expir"]) else 0,
+            1 if any(x in r.lower() for x in ["boundary","burst","double","2x","twice","fixed window","fixed-window","two windows","across windows","back-to-back","bypass the limit","bypass the rate"]) else 0,
+            1 if any(x in r.lower() for x in ["memory leak","unbounded","never clean","never delet","grow indefin","accumulate","no cleanup","stale entry","not removed"]) else 0,
         ]),
         "prompt": (
             "Review this TypeScript rate limiter. What bugs or edge cases does it have? Be specific.\n\n"

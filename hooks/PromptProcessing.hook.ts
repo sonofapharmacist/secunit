@@ -748,7 +748,7 @@ Classify the prompt into a response mode for ${ASSISTANT_NAME}. When CONTEXT is 
 Mode rules:
 - MINIMAL: greetings, ratings, single-token acknowledgments ("ok", "thanks", "8/10", "sounds good") — UNLESS context shows the prompt is approving a multi-step plan from prior turns. In that case classify what the conversation makes the prompt mean.
 - NATIVE: the executor can respond by taking direct action without a plan — looking something up, running an existing command or script, making a contained edit, or invoking a known tool/skill/script that already exists — AND no new artifact is created (no new file, function, feature, route, table, hook, skill, agent, integration, page) — AND no multi-step plan is required.
-- ALGORITHM: everything else. Always pick ALGORITHM for: any build/create/make/implement/design/develop/scaffold/prototype/architect/refactor/migrate/integrate request, anything touching multiple files, anything ambiguous in scope, anything affecting doctrine / system-prompt / hooks / CLAUDE.md / Algorithm / ISA, anything spanning multiple projects, anything that requires investigation or audit, any meta-question about how the system itself works, any single-word approval ("yes", "do it", "go", "ship it") whose context is a multi-step proposal.
+- ALGORITHM: everything else. Always pick ALGORITHM for: any build/create/make/implement/design/develop/scaffold/prototype/architect/refactor/migrate/integrate request, anything touching multiple files, anything ambiguous in scope, anything affecting doctrine / system-prompt / hooks / CLAUDE.md / Algorithm / ISA, anything spanning multiple projects, any single-word approval ("yes", "do it", "go", "ship it") whose context is a multi-step proposal. Investigation, audit, and meta-questions about the system ONLY count toward ALGORITHM when they also require multi-file tracing, root-cause analysis across components, or produce a new artifact (report, doc, fix) — a single lookup, a single command, reading one file and reporting on it, or answering a direct question from known context stays NATIVE even when the prompt uses words like "investigate," "audit," "look into," or "why."
 
 Tier (only when mode is ALGORITHM; null otherwise):
 - 1 Standard: trivial single-file work that creates something new (~<90s).
@@ -770,6 +770,9 @@ Mode examples:
 - "you have a script for this" → mode NATIVE, tier null, reason "invoke existing script, no new work"
 - "finish submitting the results" (when context shows a pipeline already exists) → mode NATIVE, tier null, reason "running existing pipeline, no new work"
 - "build me a skill for this" → mode ALGORITHM (contains "build" — new artifact creation, not invoking existing)
+- "investigate why the classifier hook keeps misfiring" (single root-cause trace through named hook + its dependency, ends in a fix or report) → mode ALGORITHM, tier 2-3, reason "multi-file root-cause investigation"
+- "why did this test fail" (one file, one run, direct answer from known context) → mode NATIVE, tier null, reason "single lookup answered from available context, not multi-file tracing"
+- "run 10 more tests on the local model" (single repeated command, no new artifact, no multi-step plan) → mode NATIVE, tier null, reason "executing an existing test command repeatedly"
 
 OUTPUT FORMAT (JSON only, single object on one line, no prose, no markdown):
 {

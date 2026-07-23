@@ -1083,9 +1083,9 @@ inference_hosts:
     base_url: "http://localhost:11435"    # optional secondary
 
 models:
-  - name: "your-model-name"
-    preferred_host: "host1"
+  your-model-name:
     tier: "standard"
+    preferred_host: "host1"
     tok_per_s: 0
     warm_p50_ms: 0
     quality_pct: 0

@@ -1,5 +1,5 @@
 version: 2
-decision_date: 2026-07-22
+decision_date: 2026-07-23
 description: |
   Per-model routing manifest for local inference.
   Populate with your own hosts and benchmark data.
@@ -18,9 +18,9 @@ inference_hosts:
     base_url: "http://localhost:11435"    # optional secondary
 
 models:
-  - name: "your-model-name"
-    preferred_host: "host1"
+  your-model-name:
     tier: "standard"
+    preferred_host: "host1"
     tok_per_s: 0
     warm_p50_ms: 0
     quality_pct: 0

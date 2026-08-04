@@ -2,7 +2,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAUDE_DIR="${HOME}/.claude"
+
+# Install target. PAI_INSTALL_ROOT redirects the whole install to a scratch directory so
+# the installer can be smoke-tested without touching a real ~/.claude. Unset (the normal
+# case) behaves exactly as before. Only the root is redirected — the ".claude" suffix is
+# always appended, so a test run lands at $PAI_INSTALL_ROOT/.claude and nothing else moves.
+CLAUDE_DIR="${PAI_INSTALL_ROOT:-$HOME}/.claude"
+mkdir -p "$CLAUDE_DIR"
 
 # Package-manager installs need root. Use sudo if present and we're not already root;
 # otherwise run bare (covers containers/CI, which are commonly root with no sudo binary).
@@ -170,23 +176,83 @@ for src in "${REPO_ROOT}"/*; do
   fi
 done
 
-# 2b. Ensure pai.* fields are in settings.json.
-# The bundle-copy above skips settings.json if ~/.claude/settings.json already exists
-# (which it does on any machine that has Claude Code installed). Merge pai.* explicitly
-# so pai.version / algorithmVersion / repoUrl always land regardless of prior state.
+# 2b. Merge the secunit settings.json template into the user's settings.json.
+#
+# The bundle-copy above is skip-if-exists, which is correct for user-authored files like
+# CLAUDE.md (clobbering would destroy their work) but WRONG for settings.json: on any
+# machine with Claude Code installed — which the README requires — settings.json already
+# exists, so the skip silently dropped the entire secunit config. Every hook registration
+# (58 across 13 events), statusLine, env, contextFiles and ~30 other keys were lost while
+# the installer still printed "Done" and exited 0.
+#
+# Merge policy, deliberately asymmetric by key ownership:
+#   - MACHINE-OWNED keys (hooks, statusLine, spinnerVerbs, ...) are secunit's to define.
+#     The template wins; these are what make the harness function.
+#   - USER-OWNED keys (model, permissions, theme, and anything else the user set that the
+#     template doesn't define) are never touched.
+#   - permissions is explicitly user-owned and never merged: silently unioning allow-lists
+#     would widen a user's security posture without consent.
 SETTINGS_TEMPLATE="${REPO_ROOT}/settings.json"
 SETTINGS_DEST="${CLAUDE_DIR}/settings.json"
 if [ -f "$SETTINGS_TEMPLATE" ] && [ -f "$SETTINGS_DEST" ]; then
+  cp "$SETTINGS_DEST" "${SETTINGS_DEST}.secunit-backup"
   python3 - "$SETTINGS_DEST" "$SETTINGS_TEMPLATE" << 'PYEOF'
 import sys, json
+
 dest_path, tmpl_path = sys.argv[1], sys.argv[2]
-dest = json.load(open(dest_path))
-tmpl = json.load(open(tmpl_path))
-dest['pai'] = tmpl.get('pai', {})
-with open(dest_path, 'w') as f:
-    f.write(json.dumps(dest, indent=2) + '\n')
+with open(dest_path) as f:
+    dest = json.load(f)
+with open(tmpl_path) as f:
+    tmpl = json.load(f)
+
+# Keys secunit owns outright — the harness does not function without them, so the
+# template is authoritative and overwrites whatever was there.
+MACHINE_OWNED = {
+    "hooks", "statusLine", "spinnerVerbs", "spinnerTipsOverride", "contextFiles",
+    "_contextFiles_docs", "observability", "loadAtStartup", "dynamicContext",
+    "postCompactRestore", "allowedHttpHookUrls", "httpHookAllowedEnvVars",
+    "pai", "$schema",
+}
+
+# Keys that belong to the user even when the template also defines them. permissions is
+# here on purpose: merging allow-lists would widen the user's security posture silently.
+USER_OWNED = {"permissions", "model", "theme"}
+
+# Maps where both sides have legitimate entries. Replacing these wholesale would be the
+# same bug this merge exists to fix: a user's custom env vars (API keys, PATH overrides,
+# DEBUG flags) must survive, while secunit's required vars still land. Template wins only
+# on a genuine key collision.
+DEEP_MERGED = {"env"}
+
+changed = []
+for key, value in tmpl.items():
+    if key in USER_OWNED:
+        continue
+    if key in DEEP_MERGED and isinstance(value, dict):
+        existing = dest.get(key)
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(value)
+        if merged != existing:
+            dest[key] = merged
+            changed.append(key)
+    elif key in MACHINE_OWNED:
+        if dest.get(key) != value:
+            dest[key] = value
+            changed.append(key)
+    elif key not in dest:
+        # Scaffold keys (daidentity, principal, preferences, ...) seed only when absent,
+        # so re-running the installer never overwrites a configured identity.
+        dest[key] = value
+        changed.append(key)
+
+with open(dest_path, "w") as f:
+    f.write(json.dumps(dest, indent=2) + "\n")
+
+hook_events = len(dest.get("hooks", {}))
+hook_count = sum(len(m.get("hooks", [])) for arr in dest.get("hooks", {}).values() for m in arr)
+print(f"  merged {len(changed)} key(s); {hook_count} hook registrations across {hook_events} events")
 PYEOF
-  echo "✓ settings.json — pai.* fields merged from secunit template"
+  echo "✓ settings.json — secunit template merged (user keys preserved; backup at settings.json.secunit-backup)"
 fi
 
 # 3. Dependencies — PAI/TOOLS
@@ -208,9 +274,91 @@ if [ ! -d "$USER_DEST" ]; then
   echo "✓ USER/ scaffold created"
 fi
 
+# 6. Post-install verification.
+#
+# Copying a file is not the same as the config being in effect. This asserts the outcome
+# and exits non-zero when the install is broken, so a silent "Done" can never again cover
+# a harness that isn't actually wired up.
 echo ""
+echo "── Verifying install ──"
+
+VERIFY_FAILED=0
+
+# settings.json exists and actually registers hooks.
+if [ -f "$SETTINGS_DEST" ]; then
+  HOOK_SUMMARY=$(python3 - "$SETTINGS_DEST" << 'PYEOF'
+import sys, json
+try:
+    with open(sys.argv[1]) as f:
+        s = json.load(f)
+except Exception as e:
+    print(f"INVALID {e}")
+    raise SystemExit(0)
+hooks = s.get("hooks", {})
+events = len(hooks)
+count = sum(len(m.get("hooks", [])) for arr in hooks.values() for m in arr)
+print(f"{events} {count}")
+PYEOF
+)
+  case "$HOOK_SUMMARY" in
+    INVALID*)
+      echo "✗ settings.json is not valid JSON — ${HOOK_SUMMARY#INVALID }"
+      VERIFY_FAILED=1
+      ;;
+    *)
+      # Parse both numbers and require each to be non-zero. Glob-matching the string
+      # (e.g. "0"*) is not sufficient: "1 0" — one event registering zero hooks, which a
+      # hand-edit or a partial copy can produce — would slip through as a success.
+      HOOK_EVENTS="${HOOK_SUMMARY%% *}"
+      HOOK_COUNT="${HOOK_SUMMARY##* }"
+      if ! [ "$HOOK_EVENTS" -gt 0 ] 2>/dev/null || ! [ "$HOOK_COUNT" -gt 0 ] 2>/dev/null; then
+        echo "✗ settings.json has no hook registrations — the harness will not run."
+        echo "  (events=${HOOK_EVENTS:-?}, registrations=${HOOK_COUNT:-?})"
+        echo "  Restore your previous config: mv ${SETTINGS_DEST}.secunit-backup ${SETTINGS_DEST}"
+        VERIFY_FAILED=1
+      else
+        echo "✓ settings.json — ${HOOK_EVENTS} hook events, ${HOOK_COUNT} registrations"
+      fi
+      ;;
+  esac
+else
+  echo "✗ settings.json missing at ${SETTINGS_DEST}"
+  VERIFY_FAILED=1
+fi
+
+# CLAUDE.md — the operational doctrine the DA reads every session.
+if [ -f "${CLAUDE_DIR}/CLAUDE.md" ]; then
+  echo "✓ CLAUDE.md present"
+else
+  echo "✗ CLAUDE.md missing — the DA will start with no operational doctrine."
+  VERIFY_FAILED=1
+fi
+
+# Core trees.
+for d in skills hooks PAI; do
+  if [ -d "${CLAUDE_DIR}/${d}" ]; then
+    echo "✓ ${d}/ present"
+  else
+    echo "✗ ${d}/ missing at ${CLAUDE_DIR}/${d}"
+    VERIFY_FAILED=1
+  fi
+done
+
+echo ""
+if [ "$VERIFY_FAILED" -ne 0 ]; then
+  echo "═══ Install INCOMPLETE ══════════════════════════"
+  echo ""
+  echo "One or more checks failed above. secunit is not ready to use."
+  echo "Re-run this installer, or open an issue with the failed check names."
+  echo ""
+  exit 1
+fi
+
 echo "═══ Done ════════════════════════════════════════"
 echo ""
 echo "Next steps:"
-echo "  Open Claude Code and run /interview to set up your identity and DA."
+echo "  1. Open Claude Code:  cd ~/.claude && claude"
+echo "  2. Confirm it loaded: ask your DA \"what mode are you in?\" — it should"
+echo "     answer with a PAI mode banner, not a plain chat reply."
+echo "  3. Run /interview to set up your identity and DA."
 echo ""

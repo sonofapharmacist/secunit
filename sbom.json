@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:21a2d5f3-147a-4847-8a61-7010abe712d5",
+  "serialNumber": "urn:uuid:64eddb06-aa0b-45a6-89e2-33d5afb4acdc",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-04T04:13:12Z",
+    "timestamp": "2026-08-04T12:18:08Z",
     "tools": {
       "components": [
         {
@@ -36,7 +36,7 @@
       "bom-ref": "pkg:npm/@pai/tools",
       "properties": [],
       "type": "application",
-      "version": "0.6.0"
+      "version": "0.6.1"
     },
     "properties": [
       {
@@ -199,7 +199,7 @@
     {
       "group": "",
       "name": "brace-expansion",
-      "version": "5.0.8",
+      "version": "5.0.9",
       "description": "Brace expansion as known from sh/bash",
       "licenses": [
         {
@@ -231,7 +231,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/brace-expansion@5.0.8",
+      "purl": "pkg:npm/brace-expansion@5.0.9",
       "externalReferences": [
         {
           "type": "vcs",
@@ -239,7 +239,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/brace-expansion@5.0.8",
+      "bom-ref": "pkg:npm/brace-expansion@5.0.9",
       "properties": [
         {
           "name": "SrcFile",
@@ -2619,7 +2619,7 @@
     {
       "group": "",
       "name": "undici",
-      "version": "7.28.0",
+      "version": "7.29.0",
       "description": "An HTTP/1.1 client, written from scratch for Node.js",
       "licenses": [
         {
@@ -2651,7 +2651,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/undici@7.28.0",
+      "purl": "pkg:npm/undici@7.29.0",
       "externalReferences": [
         {
           "type": "website",
@@ -2663,7 +2663,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/undici@7.28.0",
+      "bom-ref": "pkg:npm/undici@7.29.0",
       "properties": [
         {
           "name": "SrcFile",

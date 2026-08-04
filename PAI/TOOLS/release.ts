@@ -325,6 +325,22 @@ function strip() {
     log('  ⚠ LICENSE not found — no root LICENSE')
   }
 
+  // --- public CLAUDE.md → promote to repo root -----------------
+  // The private root CLAUDE.md is stripped (it carries identity, contacts, and business
+  // context). Without a public replacement the DA boots with no modes, no format
+  // templates, and no context routing — everything the README promises the harness does.
+  // TEMPLATES/CLAUDE.md is the public doctrine file; it is written to be gate-clean.
+  const claudeMdSrc = join(pai, 'TEMPLATES', 'CLAUDE.md')
+  if (existsSync(claudeMdSrc)) {
+    writeFileSync(join(STAGE_ROOT, 'CLAUDE.md'), readFileSync(claudeMdSrc, 'utf-8'), 'utf-8')
+    log('  ✓ PAI/TEMPLATES/CLAUDE.md → CLAUDE.md (repo root)')
+  } else {
+    throw new Error(
+      'PAI/TEMPLATES/CLAUDE.md not found — refusing to ship a release with no public ' +
+      'CLAUDE.md. A release without it installs a DA with no operational doctrine.',
+    )
+  }
+
   // --- install.sh → promote to repo root -----------------------
   const installSrc = join(pai, 'install.sh')
   if (existsSync(installSrc)) {

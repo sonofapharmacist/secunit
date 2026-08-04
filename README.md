@@ -24,8 +24,20 @@ git clone https://github.com/sonofapharmacist/secunit ~/.claude/secunit
 bash ~/.claude/secunit/install.sh
 ```
 
-The installer walks through identity setup, DA configuration, voice (optional; configure
-a TTS provider in settings.json), and environment validation. You'll name your own DA; mine is Munro.
+The installer copies the harness into `~/.claude`, merges its config into your existing
+`settings.json` (your own `model`, `permissions`, and theme are left alone — a backup is
+written to `settings.json.secunit-backup`), installs dependencies, and then verifies the
+result. It exits non-zero and tells you what failed if anything didn't land.
+
+Then open Claude Code and confirm it loaded:
+
+```bash
+cd ~/.claude && claude
+```
+
+Ask your DA *"what mode are you in?"* — you should get a PAI mode banner rather than a
+plain chat reply. That one question is the fastest check that the harness is actually
+wired up. Then run `/interview` to set up your identity and name your DA; mine is Munro.
 
 **Requirements:** Claude Code, Bun, macOS or Linux.
 

@@ -75,7 +75,7 @@
     "ask": [],
     "defaultMode": "default"
   },
-  "model": "sonnet",
+  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -1257,6 +1257,7 @@
   "awaySummaryEnabled": false,
   "plansDirectory": "Plans/",
   "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
   "theme": "dark",
   "teammateMode": "in-process",
   "skipAutoPermissionPrompt": true,
@@ -1333,7 +1334,7 @@
     "voiceClone": ""
   },
   "pai": {
-    "version": "0.6.0",
+    "version": "0.6.1",
     "algorithmVersion": "7.1.1",
     "repoUrl": "https://github.com/sonofapharmacist/secunit"
   },
@@ -1407,6 +1408,5 @@
         "discord"
       ]
     }
-  },
-  "skipWorkflowUsageWarning": true
+  }
 }

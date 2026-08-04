@@ -60,6 +60,15 @@ ENDPOINTS = {
         "is_reasoning": True,
         "extra_payload": {"reasoning": {"effort": "none"}},
     },
+    "or_laguna_s21": {
+        "name": "Poolside Laguna S 2.1 (118B/8B MoE, OpenRouter free tier)",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "poolside/laguna-s-2.1:free",
+        "passage_key": "api/openrouter",
+        "max_tokens": 16000,
+        "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "none"}},
+    },
 }
 
 

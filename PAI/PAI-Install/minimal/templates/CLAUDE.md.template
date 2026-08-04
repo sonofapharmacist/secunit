@@ -1,0 +1,40 @@
+# {{TEAM_NAME}} — Claude Code (minimal install)
+
+This is a minimal install: the security pipeline is active, memory is a flat
+file you can read and edit directly, and nothing else is configured yet. No
+persona, no fixed workflow, no required process. Just talk to it.
+
+## Security
+
+Every Bash, Write, Edit, MultiEdit, WebFetch, and WebSearch call is screened
+before it runs — dangerous command patterns, outbound data leaks, and prompt
+injection attempts get caught, not just logged. Web content fetched into a
+session is scanned before it lands in context. This is on by default; there
+is nothing to configure to get it.
+
+**One rule that matters more than the rest: don't point this at client
+source code or client data without checking first.** If you're not sure
+whether something's in scope, ask before pasting it in.
+
+## Memory
+
+`MEMORY.md` in this directory is where anything worth remembering across
+sessions goes — project conventions, things that didn't work, useful
+context. Read it, edit it directly, or just ask Claude to remember
+something and it'll add an entry. No special format required beyond a
+short heading and a line or two.
+
+## Reset
+
+If a session or a change to this setup goes sideways, nothing here is
+precious. Delete `MEMORY.md` and start a new one, or re-run the installer.
+There's no state you can't walk back.
+
+## Growing into more
+
+This install intentionally skips PAI's fuller doctrine — the Algorithm
+(structured multi-phase task execution), the ISA system (living
+task/project specs), named skills, and a persistent assistant identity.
+None of that is gone; it's just not loaded by default. If your work starts
+wanting more structure, see `{{UPGRADE_DOC_PATH}}` for how to opt in
+without starting over.

@@ -14,7 +14,7 @@
 enabled = true
 
 [telegram]
-enabled = true
+enabled = false
 
 [imessage]
 enabled = false

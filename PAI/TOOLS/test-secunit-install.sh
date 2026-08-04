@@ -110,7 +110,6 @@ chk "PAI/TOOLS/node_modules" "[ -d /root/.claude/PAI/TOOLS/node_modules ]"
 # --- Key files ---
 chk "PAI/statusline-command.sh" "[ -f /root/.claude/PAI/statusline-command.sh ]"
 chk "PAI/ALGORITHM/LATEST" "[ -f /root/.claude/PAI/ALGORITHM/LATEST ]"
-chk "PAI/PAI_SYSTEM_PROMPT.md" "[ -f /root/.claude/PAI/PAI_SYSTEM_PROMPT.md ]"
 chk "install.sh executable" "[ -x /secunit/install.sh ]"
 
 # --- System tools (installed by install.sh 1b, default path — no SECUNIT_SKIP_TOOLS) ---

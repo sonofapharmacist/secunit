@@ -9,7 +9,7 @@
 **REQUIRED FIRST:** Read the canonical structure:
 
 ```
-~/.claude/PAI/SkillSystem.md
+~/.claude/PAI/DOCUMENTATION/Skills/SkillSystem.md
 ```
 
 This defines exactly what "canonicalize" means.

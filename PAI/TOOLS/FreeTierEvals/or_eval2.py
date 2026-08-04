@@ -18,7 +18,7 @@ MODELS = [
 
 TESTS = [
     ("Terse",    "Say exactly: Acknowledged. Nothing else.",                                                     10,  lambda r: "acknowledged" in r.lower()),
-    ("JSON",     'Reply with ONLY valid JSON, no markdown fences: {"status": "ok", "count": 42}',               40,  lambda r: (lambda j: j.get("status")=="ok" and j.get("count")==42)(json.loads(r.strip()))),
+    ("JSON",     'Reply with ONLY valid JSON, no markdown fences: {"status": "ok", "count": 42}',               40,  lambda r: (lambda j: j.get("status")=="ok" and j.get("count")==42)(json.JSONDecoder().raw_decode(r.strip())[0])),
     ("Math",     "A train: 60mph for 2hrs, then 90mph for 1hr. Total distance? One line.",                      50,  lambda r: "210" in r),
     ("Cls-S",    "Reply ONE word ONLY — MINIMAL, NATIVE, or ALGORITHM: 'What is the capital of France?'",       8,   lambda r: "NATIVE" in r.upper()),
     ("Cls-C",    "Reply ONE word ONLY — MINIMAL, NATIVE, or ALGORITHM: 'Refactor auth to JWTs, update all tests, write migration guide.'", 8, lambda r: "ALGORITHM" in r.upper()),

@@ -2,7 +2,7 @@
 
 Defense-in-depth via a composable inspector pipeline. Inspired by Block Goose's ToolInspector architecture.
 
-> Constitutional security rules (external content = READ-ONLY, STOP and REPORT) are in the system prompt (`PAI/PAI_SYSTEM_PROMPT.md`). This file documents the security ARCHITECTURE.
+> Security enforcement is code-first: `SecurityPipeline`, `PromptGuard`, and `ContentScanner` hooks (all registered in `settings.json`) enforce the external-content-is-read-only boundary at runtime. This file documents the security ARCHITECTURE.
 
 ---
 
@@ -185,7 +185,7 @@ Do NOT use `kill` to restart Pulse — launchd auto-restarts it with stale code.
 | Command block/alert patterns | `patterns.yaml` → `bash.blocked/alert` | Immediate |
 | File path protections | `patterns.yaml` → `paths.*` | Immediate |
 | Natural language rules | `SECURITY_RULES.md` | Immediate (cached per session) |
-| AI behavioral rules | `PAI_SYSTEM_PROMPT.md` | Next session |
+| AI behavioral rules | `CLAUDE.md` | Next session |
 | Hook wiring | `settings.json` → `hooks` | Immediate |
 
 ---

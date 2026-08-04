@@ -17,8 +17,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseCriteriaList } from '../../hooks/lib/isa-utils';
 
-// Allowlist path: top of ~/.claude per spec. We only READ it (never write),
-// so the ContainmentGuard write restriction does not apply. Parser must match
+// Allowlist path: top of ~/.claude per spec. Read-only here (never written).
+// Parser must match
 // the hook's parser exactly: skip blanks and '#' lines, expand tilde / $HOME
 // prefixes, treat the rest as absolute repo paths.
 const ALLOWLIST_PATH = join(homedir(), '.claude', 'checkpoint-repos.txt');

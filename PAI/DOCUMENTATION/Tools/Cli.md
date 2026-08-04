@@ -191,11 +191,15 @@ Loop mode displays a live progress dashboard:
 
 ---
 
-## The Arbol CLI (pai)
+## The Arbol CLI (pai) — NOT IMPLEMENTED
 
-**Location:** `~/.claude/PAI/ARBOL/Actions/pai.ts`
+> **Status: aspirational.** Neither `PAI/ARBOL/` nor `PAI/ARBOL/Actions/pai.ts` exists in this tree. Everything in this section describes a tool that was never built — the `action`, `pipelines`, and `info` subcommands below are not runnable.
+>
+> **Historical name note:** the former `PAI/TOOLS/pai.ts` Claude Code launcher was retired in 2026-07; bare `claude` is the supported interactive launch path. The Arbol CLI described here remains a separate, unimplemented design.
 
-The Arbol CLI (`pai`) provides a unified interface for running actions and pipelines locally. It supports JSON input via arguments, stdin piping, and UNIX-style action composition.
+**Documented location (does not exist):** `~/.claude/PAI/ARBOL/Actions/pai.ts`
+
+The Arbol CLI (`pai`) was intended to provide a unified interface for running actions and pipelines locally, supporting JSON input via arguments, stdin piping, and UNIX-style action composition.
 
 ### Quick Start
 
@@ -354,38 +358,42 @@ This two-tier resolution means you can create personal actions and pipelines tha
 
 ## Setting Up Shell Aliases
 
-For convenience, add aliases to your shell configuration (`.zshrc`, `.bashrc`):
+For convenience, add an alias for the Algorithm CLI — the only tool below that actually exists — to your shell configuration (`.zshrc`, `.bashrc`):
 
 ```bash
-# The Algorithm CLI
+# The Algorithm CLI (real, runnable)
 alias algorithm="bun ~/.claude/PAI/TOOLS/algorithm.ts"
-
-# The Arbol CLI
-alias pai="bun ~/.claude/PAI/ARBOL/Actions/pai.ts"
-
-# Runners (optional — pai CLI wraps these)
-alias arbol-run="bun ~/.claude/PAI/ARBOL/Actions/lib/runner.v2.ts"
-alias arbol-pipe="bun ~/.claude/PAI/ARBOL/Actions/lib/pipeline-runner.ts"
 ```
 
-Then use:
+> **Do not add the aliases below yet.** The Arbol CLI (`pai`) and its runners are the same NOT IMPLEMENTED tool described above — `PAI/ARBOL/` does not exist in this tree. They're listed here only to show the intended shape of the aspirational design; running them will fail. The `pai` name is also no longer the retired Claude Code launcher's alias (see the Historical name note above) — don't reintroduce it for either purpose until Arbol is actually built.
+
+```bash
+# The Arbol CLI (aspirational — NOT runnable, PAI/ARBOL/ does not exist)
+# alias pai="bun ~/.claude/PAI/ARBOL/Actions/pai.ts"
+
+# Runners (aspirational — NOT runnable, pai CLI wraps these)
+# alias arbol-run="bun ~/.claude/PAI/ARBOL/Actions/lib/runner.v2.ts"
+# alias arbol-pipe="bun ~/.claude/PAI/ARBOL/Actions/lib/pipeline-runner.ts"
+```
+
+Then use the real tool:
 
 ```bash
 algorithm -m loop -p ISA-20260213-auth -n 20 -a 4
-pai action A_EXAMPLE_SUMMARIZE --input '{"content": "text"}'
-pai actions
 ```
+
+The `pai action ...` / `pai actions` examples elsewhere in this doc describe the aspirational Arbol CLI and are not runnable today.
 
 ---
 
 ## Summary
 
-| Tool | Purpose | Command |
-|------|---------|---------|
-| **Algorithm CLI** | Run PAI Algorithm against ISAs | `bun Tools/algorithm.ts -m loop -p <ISA>` |
-| **Arbol CLI (pai)** | Run actions and pipelines | `bun ACTIONS/pai.ts action <name>` |
-| **Runner** | Low-level action execution | `bun ACTIONS/lib/runner.v2.ts run <action>` |
-| **Pipeline Runner** | Chain actions via YAML | `bun ACTIONS/lib/pipeline-runner.ts run <pipeline>` |
+| Tool | Purpose | Command | Status |
+|------|---------|---------|--------|
+| **Algorithm CLI** | Run PAI Algorithm against ISAs | `bun Tools/algorithm.ts -m loop -p <ISA>` | Real, runnable |
+| **Arbol CLI (pai)** | Run actions and pipelines | `bun ACTIONS/pai.ts action <name>` | **NOT IMPLEMENTED** — aspirational |
+| **Runner** | Low-level action execution | `bun ACTIONS/lib/runner.v2.ts run <action>` | **NOT IMPLEMENTED** — aspirational |
+| **Pipeline Runner** | Chain actions via YAML | `bun ACTIONS/lib/pipeline-runner.ts run <pipeline>` | **NOT IMPLEMENTED** — aspirational |
 
 ---
 

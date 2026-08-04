@@ -5,9 +5,9 @@
  * TRIGGER: PostCompact (fires after conversation compaction completes)
  *
  * Counterpart to LoadContext.hook.ts (SessionStart). After compaction, contextual
- * knowledge (projects, identity details) gets compressed away. Constitutional rules
- * live in the system prompt (PAI_SYSTEM_PROMPT.md) which survives compression natively,
- * so this hook only restores contextual files that compaction discards.
+ * knowledge (projects, identity details) gets compressed away. Operational rules
+ * live in CLAUDE.md, which Claude Code reloads natively, so this hook only
+ * restores contextual files that compaction discards.
  *
  * Tier 1 (MUST restore — contextual knowledge):
  *   - Files listed in settings.json postCompactRestore.fullFiles

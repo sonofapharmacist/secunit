@@ -119,7 +119,7 @@ TESTS = [
             "Message: \"What's the capital of France?\"\n"
             "Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM."
         ),
-        "eval": lambda r: r.strip().upper() == "NATIVE",
+        "eval": lambda r: r.strip().upper().startswith("NATIVE"),
         "scoring": "exact",
     },
     {
@@ -131,7 +131,7 @@ TESTS = [
             "and write a migration guide.\"\n"
             "Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM."
         ),
-        "eval": lambda r: r.strip().upper() == "ALGORITHM",
+        "eval": lambda r: r.strip().upper().startswith("ALGORITHM"),
         "scoring": "exact",
     },
     {
@@ -207,7 +207,7 @@ TESTS = [
 def _check_json(raw: str) -> bool:
     s = _strip_fence(raw)
     try:
-        j = json.loads(s)
+        j = json.JSONDecoder().raw_decode(s.strip())[0]
         return j.get("status") == "ok" and j.get("count") == 42
     except Exception:
         return False

@@ -1,0 +1,8 @@
+{
+  "name": "pai-minimal-install-deps",
+  "private": true,
+  "description": "Runtime dependencies for the minimal-install security pipeline. install-minimal.sh runs `bun install` here and copies node_modules into the target .claude/ directory. Not a real package — just a dependency manifest for a one-time install step.",
+  "dependencies": {
+    "yaml": "^2.5.0"
+  }
+}

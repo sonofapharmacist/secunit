@@ -175,7 +175,7 @@ The Algorithm's THINK and LEARN phases integrate with the Knowledge Archive (ent
 | Type | Destination |
 |------|-------------|
 | **knowledge** | `MEMORY/KNOWLEDGE/{People|Companies|Ideas|Research}/` — durable, lookup-by-name |
-| **rule** | A rule the system should always follow — proposed for `PAI_SYSTEM_PROMPT.md` or a SKILL.md |
+| **rule** | A rule the system should always follow — proposed for `CLAUDE.md` or a SKILL.md |
 | **gotcha** | A trap to avoid next time — appended to the relevant SKILL.md `Gotchas` section |
 | **state** | Operational state (e.g., "X is now deployed at Y") — appended to the relevant project doc |
 | **business** | Business-domain learning — `PAI/USER/BUSINESS/` |

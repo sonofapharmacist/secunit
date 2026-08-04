@@ -251,50 +251,51 @@ def call(prompt, max_tokens, url, model_id, api_key, timeout_s):
     except Exception as e:
         return None, time.time()-t0, f"EXC:{str(e)[:80]}"
 
-print(f"\nDeepSeek-V4-Flash retest — R1-R6 only (max {MAX_SCORE} pts)")
-print(f"Prior full run (NIM): 33/34 (97%) in 574s — G8 (long JSON) suspected latency driver")
-print(f"NIM retest 2026-06-12: all 6 tasks timed out at 180s — endpoint unavailable")
-print(f"This run: NIM (30s fail-fast) + OpenRouter (120s) for comparison\n")
+if __name__ == "__main__":
+    print(f"\nDeepSeek-V4-Flash retest — R1-R6 only (max {MAX_SCORE} pts)")
+    print(f"Prior full run (NIM): 33/34 (97%) in 574s — G8 (long JSON) suspected latency driver")
+    print(f"NIM retest 2026-06-12: all 6 tasks timed out at 180s — endpoint unavailable")
+    print(f"This run: NIM (30s fail-fast) + OpenRouter (120s) for comparison\n")
 
-all_endpoint_results = {}
+    all_endpoint_results = {}
 
-for ep_name, ep_url, ep_model, ep_key, ep_timeout in ENDPOINTS:
-    print(f"── {ep_name} ({ep_model}, timeout={ep_timeout}s) ──")
-    print(f"{'Task':<22}  {'Score':>7}  {'Latency':>8}")
-    print("─" * 50)
+    for ep_name, ep_url, ep_model, ep_key, ep_timeout in ENDPOINTS:
+        print(f"── {ep_name} ({ep_model}, timeout={ep_timeout}s) ──")
+        print(f"{'Task':<22}  {'Score':>7}  {'Latency':>8}")
+        print("─" * 50)
 
-    total_score = 0
-    total_time = 0.0
-    task_latencies = []
+        total_score = 0
+        total_time = 0.0
+        task_latencies = []
 
-    for t in TESTS:
-        response, elapsed, err = call(t["prompt"], t["max_tokens"],
-                                      ep_url, ep_model, ep_key, ep_timeout)
-        total_time += elapsed
-        task_latencies.append(elapsed)
+        for t in TESTS:
+            response, elapsed, err = call(t["prompt"], t["max_tokens"],
+                                          ep_url, ep_model, ep_key, ep_timeout)
+            total_time += elapsed
+            task_latencies.append(elapsed)
 
-        if err or response is None:
-            print(f"{t['id']} {t['label']:<18}  {'ERR':>7}  {elapsed:>7.1f}s  {(err or 'null')[:50]}")
-        else:
-            sc = t["scorer"](response)
-            total_score += sc
-            flag = " ✗" if sc < t["max_score"] else ""
-            print(f"{t['id']} {t['label']:<18}  {sc}/{t['max_score']:>5}  {elapsed:>7.1f}s{flag}")
-            if sc < t["max_score"]:
-                preview = response[:200].replace('\n', ' ')
-                print(f"    RESPONSE: {preview}")
+            if err or response is None:
+                print(f"{t['id']} {t['label']:<18}  {'ERR':>7}  {elapsed:>7.1f}s  {(err or 'null')[:50]}")
+            else:
+                sc = t["scorer"](response)
+                total_score += sc
+                flag = " ✗" if sc < t["max_score"] else ""
+                print(f"{t['id']} {t['label']:<18}  {sc}/{t['max_score']:>5}  {elapsed:>7.1f}s{flag}")
+                if sc < t["max_score"]:
+                    preview = response[:200].replace('\n', ' ')
+                    print(f"    RESPONSE: {preview}")
 
-        time.sleep(2)
+            time.sleep(2)
 
-    print("─" * 50)
-    avg_lat = total_time / len(TESTS)
-    pct = f"{100*total_score//MAX_SCORE}%" if total_score > 0 else "0%"
-    print(f"Result: {total_score}/{MAX_SCORE} ({pct})  |  Wall: {total_time:.1f}s  |  Avg/task: {avg_lat:.1f}s")
-    print(f"Per-task latencies: {[f'{x:.1f}s' for x in task_latencies]}\n")
-    all_endpoint_results[ep_name] = {"score": total_score, "wall": total_time, "avg": avg_lat}
-    time.sleep(4)
+        print("─" * 50)
+        avg_lat = total_time / len(TESTS)
+        pct = f"{100*total_score//MAX_SCORE}%" if total_score > 0 else "0%"
+        print(f"Result: {total_score}/{MAX_SCORE} ({pct})  |  Wall: {total_time:.1f}s  |  Avg/task: {avg_lat:.1f}s")
+        print(f"Per-task latencies: {[f'{x:.1f}s' for x in task_latencies]}\n")
+        all_endpoint_results[ep_name] = {"score": total_score, "wall": total_time, "avg": avg_lat}
+        time.sleep(4)
 
-if len(all_endpoint_results) > 1:
-    print("── Summary ──")
-    for ep, r in all_endpoint_results.items():
-        print(f"  {ep:<5}  {r['score']}/{MAX_SCORE}  wall={r['wall']:.1f}s  avg={r['avg']:.1f}s/task")
+    if len(all_endpoint_results) > 1:
+        print("── Summary ──")
+        for ep, r in all_endpoint_results.items():
+            print(f"  {ep:<5}  {r['score']}/{MAX_SCORE}  wall={r['wall']:.1f}s  avg={r['avg']:.1f}s/task")

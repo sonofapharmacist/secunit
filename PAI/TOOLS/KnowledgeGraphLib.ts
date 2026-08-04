@@ -59,6 +59,22 @@ export interface KnowledgeGraph {
   nodes: Map<string, GraphNode>;
   edges: GraphEdge[];
   adjacency: Map<string, GraphEdge[]>;
+  // Inverse of `adjacency`: target -> incoming edges. Built in the same pass
+  // that populates `adjacency` so consumers that need inbound neighbors
+  // (e.g., `MemoryRetriever.expandWithGraph`) don't have to do an O(E) scan
+  // of `edges` per anchor. Pre-indexing turns per-anchor inbound lookup from
+  // O(E) into O(deg_in).
+  incomingEdges: Map<string, GraphEdge[]>;
+  // Tag co-occurrence lives outside the traversable edge stream.
+  // tagIndex maps slug -> slug[] (deduplicated neighbors sharing any tag).
+  // It is queryable via `find <tag>` and `tagNeighbors()` only — it does NOT
+  // contribute to traversal weight, BFS adjacency, or retrieval candidate
+  // generation. The previous design put tag co-occurrence into `edges` and
+  // `adjacency`, which masked coverage gaps: a node surrounded by tag
+  // co-occurrences looked connected even when it had zero curated semantic
+  // edges, hiding the archive's true isolation (79.5% of nodes were masked
+  // by tag pollution under the old design).
+  tagIndex: Map<string, string[]>;
 }
 
 export interface TraversalNode {
@@ -218,6 +234,8 @@ export function buildGraph(domains?: string[]): KnowledgeGraph {
   const activeDomains = domains ?? DEFAULT_DOMAINS;
   const nodes = new Map<string, GraphNode>();
   const adjacency = new Map<string, GraphEdge[]>();
+  const incomingEdges = new Map<string, GraphEdge[]>();
+  const tagIndex = new Map<string, string[]>();
 
   // Phase 1: Collect all nodes
   for (const domain of activeDomains) {
@@ -269,7 +287,8 @@ export function buildGraph(domains?: string[]): KnowledgeGraph {
   //
   // Dedup priority: typed-wikilink > related > wikilink. We collect into a
   // Map<"from|to", GraphEdge> and only overwrite if the incoming edge has
-  // higher priority than the existing one. Phase 3 tag edges are appended
+  // higher priority than the existing one. Phase 3 populates `tagIndex`
+  // only — no tag edges are produced (2026-07-29 layer split).
   // separately and not deduped against phase 2.
 
   const PRIORITY: Record<string, number> = {
@@ -346,44 +365,65 @@ export function buildGraph(domains?: string[]): KnowledgeGraph {
     edges.push(edge);
     if (!adjacency.has(edge.from)) adjacency.set(edge.from, []);
     adjacency.get(edge.from)!.push(edge);
+    if (!incomingEdges.has(edge.to)) incomingEdges.set(edge.to, []);
+    incomingEdges.get(edge.to)!.push(edge);
   }
 
-  // Phase 3: Tag co-occurrence edges (bidirectional, weight 1)
-  const tagIndex = new Map<string, string[]>();
+  // Phase 3: Build the tag co-occurrence index. Critically, these slugs DO
+  // NOT become edges — they live in `tagIndex`, which is queryable via
+  // `tagNeighbors(slug)` but never contributes to traversal weight, BFS
+  // adjacency, or retrieval candidate generation. This is the layer split:
+  // tag co-occurrence is a candidate-generation / search signal, not a
+  // traversable relationship.
+  //
+  // Index shape: tag -> Set<slug>. Inverted from the previous per-slug map,
+  // which listed the slug redundantly under each of its own tags. Inverted
+  // form makes `tagNeighbors(slug)` an O(tags-on-slug) lookup over a
+  // precomputed inverse rather than a per-tag merge across slugs.
+  //
+  // No cap anymore: the previous TAG_GROUP_CAP was a defense against O(n^2)
+  // edge blowup in popular tags. Once tags stop producing edges, the cap
+  // is moot.
+  const tagToSlugs = new Map<string, Set<string>>();
   for (const [slug, node] of nodes) {
     for (const tag of node.tags) {
-      if (!tagIndex.has(tag)) tagIndex.set(tag, []);
-      tagIndex.get(tag)!.push(slug);
+      if (!tagToSlugs.has(tag)) tagToSlugs.set(tag, new Set());
+      tagToSlugs.get(tag)!.add(slug);
     }
   }
-
-  const TAG_GROUP_CAP = 50;
-  const tagEdgeSet = new Set<string>();
-
-  for (const [tag, slugs] of tagIndex) {
-    if (slugs.length < 2) continue;
-    const group = slugs.length > TAG_GROUP_CAP ? slugs.slice(0, TAG_GROUP_CAP) : slugs;
-    for (let i = 0; i < group.length; i++) {
-      for (let j = i + 1; j < group.length; j++) {
-        const a = group[i];
-        const b = group[j];
-        const keyAB = `${a}|${b}|${tag}`;
-        if (tagEdgeSet.has(keyAB)) continue;
-        tagEdgeSet.add(keyAB);
-        tagEdgeSet.add(`${b}|${a}|${tag}`);
-
-        const edgeAB: GraphEdge = { from: a, to: b, weight: 1, edgeType: "tag", label: tag };
-        const edgeBA: GraphEdge = { from: b, to: a, weight: 1, edgeType: "tag", label: tag };
-        edges.push(edgeAB, edgeBA);
-        if (!adjacency.has(a)) adjacency.set(a, []);
-        if (!adjacency.has(b)) adjacency.set(b, []);
-        adjacency.get(a)!.push(edgeAB);
-        adjacency.get(b)!.push(edgeBA);
+  for (const [slug, node] of nodes) {
+    if (node.tags.length === 0) {
+      tagIndex.set(slug, []);
+      continue;
+    }
+    const neighbors = new Set<string>();
+    for (const tag of node.tags) {
+      const slugs = tagToSlugs.get(tag);
+      if (!slugs) continue;
+      for (const s of slugs) {
+        if (s !== slug) neighbors.add(s);
       }
     }
+    tagIndex.set(slug, [...neighbors]);
   }
 
-  return { nodes, edges, adjacency };
+  return { nodes, edges, adjacency, incomingEdges, tagIndex };
+}
+
+/**
+ * Return slugs that share at least one tag with the input slug.
+ *
+ * Explicit opt-in for consumers that want tag-driven candidate generation
+ * (e.g., suggestion lists). Does NOT participate in traversal or retrieval
+ * scoring; callers must apply their own dedup, ranking, and ranking limits.
+ *
+ * `tagIndex` is the source of truth here — this helper is a thin reader.
+ */
+export function tagNeighbors(
+  graph: KnowledgeGraph,
+  slug: string
+): string[] {
+  return graph.tagIndex.get(slug) ?? [];
 }
 
 // ============================================================================

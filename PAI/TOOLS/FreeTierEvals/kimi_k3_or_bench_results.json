@@ -1,0 +1,214 @@
+{
+  "model": "moonshotai/kimi-k3",
+  "provider": "openrouter",
+  "temperature": 1,
+  "max_tokens": 8192,
+  "date": "2026-07-28",
+  "t_battery": {
+    "battery": "T",
+    "score": 9,
+    "max": 9,
+    "wall": 69.9586730003357,
+    "results": [
+      {
+        "id": "T1_minimal",
+        "label": "MINIMAL \u2014 terse ack",
+        "score": 1,
+        "raw": "Acknowledged.",
+        "err": ""
+      },
+      {
+        "id": "T2_classify",
+        "label": "Classify \u2014 simple lookup",
+        "score": 1,
+        "raw": "NATIVE",
+        "err": ""
+      },
+      {
+        "id": "T3_classify2",
+        "label": "Classify \u2014 multi-step task",
+        "score": 1,
+        "raw": "ALGORITHM",
+        "err": ""
+      },
+      {
+        "id": "T4_json",
+        "label": "JSON \u2014 structured",
+        "score": 1,
+        "raw": "{\"status\": \"ok\", \"count\": 42}",
+        "err": ""
+      },
+      {
+        "id": "T5_reasoning",
+        "label": "Reasoning \u2014 logic puzzle",
+        "score": 1,
+        "raw": "Carol",
+        "err": ""
+      },
+      {
+        "id": "T6_code",
+        "label": "Code gen \u2014 TypeScript function",
+        "score": 1,
+        "raw": "```typescript\nfunction isPalindrome(str: string): boolean {\n  return str === str.split(\"\").reverse().join(\"\");\n}\n```",
+        "err": ""
+      },
+      {
+        "id": "T7_instruction_follow",
+        "label": "Instruction \u2014 length constraint",
+        "score": 1,
+        "raw": "- SQL Injection: malicious code inserted into database queries\n- Cross-Site Scripting (XSS): attacker scripts injected into webpages\n- Buffer Overflow: data overwrites memory beyond allocated bounds",
+        "err": ""
+      },
+      {
+        "id": "T8_tool_call",
+        "label": "Function calling",
+        "score": 1,
+        "raw": "TOOL_CALLED",
+        "err": ""
+      },
+      {
+        "id": "T9_strategic_reasoning",
+        "label": "STRIDE \u2014 security classification",
+        "score": 1,
+        "raw": "T",
+        "err": ""
+      }
+    ],
+    "fence_observed": true
+  },
+  "r_battery": {
+    "battery": "R",
+    "score": 17,
+    "max": 17,
+    "wall": 726.5330913066864,
+    "results": [
+      {
+        "id": "R1",
+        "label": "Logic (knights/knaves)",
+        "score": 2,
+        "max": 2,
+        "raw": "A and C make opposite claims about B: A says B is a knave; C says B is a knight. So exactly one of A, C is telling the truth.\n\nCase 1: B is a knight.\n- Then A's claim \"B is a knave\" is false, so A is a knave.\n- C's claim \"B is a knight\" is true, so C is a knight.\n- B says \"A and C are the same type.\" But A=knave and C=knight are different, so B's statement is false \u2014 impossible for a knight. Contradiction.\n\nCase 2: B is a knave.\n- A's claim \"B is a knave\" is true, so A is a knight.\n- C's claim \"B is a knight\" is false, so C is a knave.\n- B says \"A and C are the same type.\" A=knight and C=knave",
+        "err": ""
+      },
+      {
+        "id": "R2",
+        "label": "STRIDE \u2192 JSON",
+        "score": 5,
+        "max": 5,
+        "raw": "[\n  {\n    \"stride_category\": \"Spoofing\",\n    \"component\": \"JWT authentication (HS256)\",\n    \"attack_vector\": \"The symmetric HS256 secret lives in an environment variable, so it can leak via logs, crash dumps, debug endpoints, or a committed .env file; weak secrets are also brute-forceable offline against any captured token. A leaked or cracked secret lets an attacker sign forged JWTs and impersonate any user.\",\n    \"impact\": \"Full impersonation of arbitrary user accounts, unauthorized access to all authenticated API resources, and complete loss of trust in the authentication layer.\"\n  },\n  {\n ",
+        "err": ""
+      },
+      {
+        "id": "R3",
+        "label": "Flask vulns",
+        "score": 3,
+        "max": 3,
+        "raw": "# Security Review\n\n## `/user` endpoint\n\n**1. SQL Injection \u2014 Critical**\n```python\ncur.execute(f\"SELECT * FROM users WHERE id = {user_id}\")\n```\n`user_id` is raw query-string input interpolated directly into SQL. Exploits:\n- `/user?id=1 OR 1=1` \u2014 bypasses the ID filter\n- `/user?id=-1 UNION SELECT username, password_hash, email, ... FROM users--` \u2014 exfiltrates credentials (even with `fetchone()`, an attacker iterates with `LIMIT`/`OFFSET` or uses boolean-based extraction)\n\nNote: sqlite3's `execute()` blocks stacked statements, so `; DROP TABLE` won't work here \u2014 but UNION and boolean attacks full",
+        "err": ""
+      },
+      {
+        "id": "R4",
+        "label": "Logic grid",
+        "score": 3,
+        "max": 3,
+        "raw": "Key deductions:\n\n- Clue 4: **designer = cat**.\n- Clue 3: **Carol = dog**, so Carol is **not** the designer.\n- Note: Clue 1 (\u201cengineer has no cat\u201d) adds nothing new, because there is only one cat and the designer already has it; the engineer is a different person.\n\nSo the cat/designer is either Alice or Bob. Both choices complete consistently, so **as stated the clues give two valid solutions**:\n\n**Solution 1**\n\n| Person | Job | Pet |\n|---|---|---|\n| Alice | manager | fish |\n| Bob | designer | cat |\n| Carol | engineer | dog |\n\nCheck: Bob (designer) has cat; Carol (engineer) has dog, not cat; Bo",
+        "err": ""
+      },
+      {
+        "id": "R5",
+        "label": "Rate limiter bugs",
+        "score": 2,
+        "max": 2,
+        "raw": "# Bugs and Edge Cases\n\n## 1. Unbounded memory growth (the big one)\n\n`counts` and `windows` are never cleaned up. Every unique `userId` that ever calls this function leaves two permanent entries. On a long-lived server with many transient users, this leaks memory forever. There's no TTL, sweep, or LRU eviction \u2014 expired windows are only reset if that *same user* returns.\n\n## 2. Plain objects used as maps \u2014 prototype key collisions\n\n`Record<string, number> = {}` with attacker-influenced keys is dangerous. The `!windows[userId]` check is a truthiness check, not a presence check, so inherited prop",
+        "err": ""
+      },
+      {
+        "id": "R6",
+        "label": "Redis vs DynamoDB",
+        "score": 2,
+        "max": 2,
+        "raw": "**Workload: 10M \u00d7 2KB \u2248 20GB**\n\n**1. Cost**\n- **Redis Cluster (ElastiCache):** 20GB + replica + overhead \u2248 45\u201350GB RAM. ~4\u00d7 cache.r6g.xlarge \u2248 **$1,200/mo** on-demand (~$700 reserved). Cost is flat regardless of traffic.\n- **DynamoDB:** Storage is trivial (~$5/mo). Cost is request-driven: at 10 reads + 2 writes per session/day, \u2248 **$1,500/mo** on-demand. Light traffic \u2192 much cheaper than Redis; heavy traffic \u2192 much more expensive.\n\n**2. Latency p99**\n- **Redis:** ~1ms (in-memory, single-digit worst case).\n- **DynamoDB:** typically 5\u201320ms p99; spikes possible under throttling or hot partitions.",
+        "err": ""
+      }
+    ],
+    "fence_observed": false
+  },
+  "c_battery": {
+    "battery": "C",
+    "score": 7,
+    "max": 27,
+    "wall": 4706.69429397583,
+    "results": [
+      {
+        "id": "C1",
+        "label": "TS-strict type narrowing",
+        "score": 3,
+        "max": 3,
+        "elapsed": 97.96070384979248,
+        "raw": "```typescript\nimport { Buffer } from 'node:buffer';\n\nexport type ParseResult =\n  | { valid: true; token: string }\n  | { valid: false; reason: 'missing' | 'malformed' | 'expired' };\n\nfunction decodeBase64Url(input: string): string | null {\n  const base64 = input.replace(/-/g, '+').replace(/_/g, '/');\n  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);\n  try {\n    return Buffer.from(padded, 'base64').toString('utf8');\n  } catch {\n    return null;\n  }\n}\n\nfunction parseJson(text: string): unknown {\n  try {\n    const value: unknown = JSON.parse(text);\n    return value;\n  } catch {\n    return null;\n  }\n}\n\nfunction getNumericExp(payload: unknown): number | null {\n  if (typeof payload !== 'object' || payload === null) {\n    return null;\n  }\n  if (!('exp' in payload)) {\n    return null;\n  }\n  const exp: unknown = payload.exp;\n  return typeof exp === 'number' ? exp : null;\n}\n\nexport function parseAuthHeader(header: string, nowMs: number): ParseResult {\n  const trimmed = header.trim();\n  if (trimmed === '') {\n    return { valid: false, reason: 'missing' };\n  }\n\n  const match = /^Bearer\\s+(\\S+)$/i.exec(trimmed);\n  if (match === null) {\n    return { valid: false, reason: 'malformed' };\n  }\n\n  const token = match[1];\n  if (token === undefined) {\n    return { valid: false, reason: 'malformed' };\n  }\n\n  const decoded = decodeBase64Url(token);\n  if (decoded !== null) {\n    const exp = getNumericExp(parseJson(decoded));\n    if (exp !== null && exp * 1000 <= nowMs) {\n      return { valid: false, reason: 'expired' };\n    }\n  }\n\n  return { valid: true, token };\n}\n\nexport function describeParseResult(result: ParseResult): string {\n  if (result.valid) {\n    return `token:${result.token}`;\n  }\n  switch (result.reason) {\n    case 'missing':\n      return 'missing';\n    case 'malformed':\n      return 'malformed';\n    case 'expired':\n      return 'expired';\n    default: {\n      const exhaustive: never = result;\n      throw new Error(`Unhandled reason: ${String(exhaustive)}`);\n    }\n  }\n}\n```",
+        "err": "",
+        "notes": [
+          "reject paths: missing=True malformed=True expired=True",
+          "never exhaustive check present"
+        ]
+      },
+      {
+        "id": "C2",
+        "label": "Debug from stack trace + repro",
+        "score": 0,
+        "max": 3,
+        "err": "ERR:reasoning_starved_no_content:reasoning_len=19496"
+      },
+      {
+        "id": "C3",
+        "label": "Multi-file refactor",
+        "score": 0,
+        "max": 3,
+        "elapsed": 1185.5316298007965,
+        "raw": "**`a.ts`**\n```typescript\nimport { b } from \"./b\";\nimport { basicAuthorization } from \"./auth\";\n\nexport function getProfile(user: string, pw: string): Promise<unknown> {\n  if (!user || !pw) throw new Error(\"missing creds\");\n  return b(basicAuthorization(user, pw));\n}\n```\n\n**`auth.ts`** (new)\n```typescript\n/** Value for an HTTP `Authorization` header, constructed via HTTP Basic auth. */\nexport type BasicAuthorization = `Basic ${string}`;\n\nexport function basicAuthorization(user: string, pw: string): BasicAuthorization {\n  const token = Buffer.from(`${user}:${pw}`).toString(\"base64\");\n  return `Basic ${token}`;\n}\n```\n\n**`b.ts`** (unchanged)\n```typescript\nimport { c } from \"./c\";\nexport function b(auth: string): Promise<unknown> {\n  return c({ headers: { Authorization: auth } });\n}\n```\n\n**`c.ts`** (unchanged)\n```typescript\nexport function c(opts: { headers: Record<string, string> }): Promise<unknown> {\n ",
+        "err": "",
+        "notes": [
+          "missing auth.ts or one of the 3 files"
+        ]
+      },
+      {
+        "id": "C4",
+        "label": "Test generation",
+        "score": 4,
+        "max": 5,
+        "elapsed": 811.1514616012573,
+        "raw": "Looking at the buggy code against the spec: rules 1 (`deleted === true` filter) and 4 (empty array) are actually implemented correctly, so tests targeting them would **pass** and can't serve as failing tests. The real defect is rule 3 \u2014 `null`/`undefined` values get stringified to `\"null\"`/`\"undefined\"` instead of dropped. The 5 tests below each pin down a distinct manifestation of that failure mode.\n\n```typescript\n// normalizeRecords.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { normalizeRecords } from \"./buggy\";\n\ndescribe(\"normalizeRecords\", () => {\n  it(\"stringifies null values to \\\"null\\\" instead of dropping the key\", () => {\n    const result = normalizeRecords([{ id: 1, email: null }]);\n    // Buggy: [{ id: \"1\", email: \"null\" }]\n    expect(result[0]).not.toHaveProperty(\"email\");\n    expect(result[0]).toStrictEqual({ id: \"1\" });\n  });\n\n  it(\"stringifies undefined values to \\\"undefined\\\" instead of dropping the key\", () => {\n    const result = normalizeRecords([{ id: 1, name: undefined }]);\n    // Buggy: [{ id: \"1\", name: \"undefined\" }]\n    // (Object.keys includes explicitly-set undefined keys, so the bug fires here too)\n    expect(result[0]).not.toHaveProperty(\"name\");\n    expect(result[0]).toStrictEqual({ id: \"1\" });\n  });\n\n  it(\"emits keys for an all-nullish record instead of returning an empty object\", () => {\n    const result = normalizeRecords([{ a: null, b: undefined }]);\n    // Buggy: [{ a: \"null\", b: \"undefined\" }]\n    expect(result[0]).toStrictEqual({});\n  });\n\n  it(\"sends deleted: \\\"null\\\" for records with a null deleted flag instead of dropping the key\", () => {\n    // deleted: null is NOT deleted === true, so the record is correctly kept...\n    const result = normalizeRecords([{ id: 7, deleted: null }]);\n    expect(result).toHaveLength(1);\n    // ...but the null flag must be dropped, not stringified\n    // Buggy: [{ id: \"7\", deleted: \"null\" }]\n    expect(result[0]).toStrictEqual({ id: \"7\" });\n  });\n\n  it(\"leaks \\\"null\\\" strings into the /sync payload for partial DB rows\", () => {\n    // Mirrors production: SELECT * FROM users with nullable columns\n    const cleaned = normalizeRecords([\n      { id: 1, name: \"Ada\", email: null },\n      { id: 2, name: \"Grace\", email: \"grace@example.com\" },\n    ]);\n    // Buggy first row: { id: \"1\", name: \"Ada\", email: \"null\" } \u2014 gets POSTed to /sync\n    expect(cleaned).toStrictEqual([\n      { ",
+        "err": "",
+        "notes": [
+          "found 5 tests (it=5 test=0)",
+          "bug patterns: deleted=True null/drop=True proto=False"
+        ]
+      },
+      {
+        "id": "C5",
+        "label": "REST API design",
+        "score": 0,
+        "max": 5,
+        "err": "ERR:reasoning_starved_no_content:reasoning_len=32745"
+      },
+      {
+        "id": "C6",
+        "label": "Bash / shell scripting",
+        "score": 0,
+        "max": 3,
+        "err": "ERR:reasoning_starved_no_content:reasoning_len=30971"
+      },
+      {
+        "id": "C8",
+        "label": "TTLCache vs vitest",
+        "score": 0,
+        "max": 5,
+        "err": "HTTP402:{\"error\":{\"message\":\"This request requires more credits, or fewer max_tokens. You requested up to 8192 tokens, but can only afford 2068. To increase, visit https://openrouter.ai/workspaces/default/key"
+      }
+    ],
+    "fence_observed": true
+  },
+  "total": "33/53",
+  "wall_s": 5530.192949295044,
+  "fence_observed": true
+}

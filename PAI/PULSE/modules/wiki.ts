@@ -47,7 +47,6 @@ const HOOKS_DIR = join(HOME, ".claude", "hooks")
 const SETTINGS_PATH = join(HOME, ".claude", "settings.json")
 const ARBOL_WORKERS_DIR = join(PAI_DIR, "USER", "ARBOL", "Workers")
 
-const SYSTEM_PROMPT_PATH = join(PAI_DIR, "PAI_SYSTEM_PROMPT.md")
 const KNOWLEDGE_DOMAINS = ["People", "Companies", "Ideas", "Blogs"] as const
 type KnowledgeDomain = (typeof KNOWLEDGE_DOMAINS)[number]
 
@@ -157,10 +156,6 @@ function walkMarkdown(dir: string): string[] {
 }
 
 function systemDocMetadata(filePath: string): { slug: string; group: string } | null {
-  if (filePath === SYSTEM_PROMPT_PATH) {
-    return { slug: "PAI_SYSTEM_PROMPT", group: "Overview" }
-  }
-
   if (filePath.startsWith(DOCUMENTATION_DIR)) {
     const rel = relative(DOCUMENTATION_DIR, filePath)
     if (rel.startsWith("..")) return null
@@ -522,8 +517,6 @@ function indexSystemDoc(filePath: string): void {
 }
 
 function indexSystemDocs(): void {
-  indexSystemDoc(SYSTEM_PROMPT_PATH)
-
   for (const filePath of walkMarkdown(DOCUMENTATION_DIR)) {
     indexSystemDoc(filePath)
   }

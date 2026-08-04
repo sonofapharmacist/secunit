@@ -242,7 +242,7 @@ export function printSummary(summary: InstallSummary): void {
   print(`${c.navy}║${c.reset}  Install Type: ${c.white}${installTypeLabel}${c.reset}${" ".repeat(Math.max(0, 33 - installTypeLabel.length))}${c.navy}║${c.reset}`);
   print(`${c.navy}╠══════════════════════════════════════════════════╣${c.reset}`);
   print(`${c.navy}║${c.reset}                                                  ${c.navy}║${c.reset}`);
-  print(`${c.navy}║${c.reset}  ${c.lightBlue}Run: ${c.bold}source ~/.zshrc && pai${c.reset}                      ${c.navy}║${c.reset}`);
+  print(`${c.navy}║${c.reset}  ${c.lightBlue}Run: ${c.bold}cd ~/.claude && claude${c.reset}                   ${c.navy}║${c.reset}`);
   print(`${c.navy}║${c.reset}                                                  ${c.navy}║${c.reset}`);
   print(`${c.navy}╚══════════════════════════════════════════════════╝${c.reset}`);
   print("");

@@ -105,7 +105,7 @@ function handleServerMessage(msg) {
       // enough for the user to see the summary, then we close the window —
       // electron/main.js's window-all-closed handler triggers app.quit(),
       // which exits the bun child, which lets install.sh resume and exec the
-      // post-install `pai` handoff. 3s is the same beat as the success voice
+      // post-install Claude Code handoff. 3s is the same beat as the success voice
       // notification so the audio finishes before the window disappears.
       setTimeout(() => { window.close(); }, 3000);
       break;
@@ -468,8 +468,8 @@ function renderSummary(summary) {
     <div class="summary-row"><span class="s-label">Install Type</span><span class="s-value">${installTypeLabel}</span></div>
     <div class="summary-action">
       <p>To activate PAI, open a terminal and run:</p>
-      <code>source ~/.zshrc && pai</code>
-      <p class="summary-hint">This reloads your shell config and launches PAI for the first time.</p>
+      <code>cd ~/.claude &amp;&amp; claude</code>
+      <p class="summary-hint">This starts Claude Code from the PAI installation directory.</p>
     </div>
   `;
   chat.appendChild(card);

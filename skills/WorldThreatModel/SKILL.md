@@ -76,10 +76,6 @@ This skill orchestrates multiple PAI capabilities:
 - **Council** — Multi-perspective debate on idea viability across horizons
 - **Research** — Deep research for model creation and updates
 
-## Voice Notification
-
-Before any workflow execution:
-```bash
 ## Customization Check
 
 Before execution, check for user customizations at:

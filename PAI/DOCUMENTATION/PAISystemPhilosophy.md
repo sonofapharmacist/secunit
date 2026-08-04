@@ -105,7 +105,7 @@ Read about the infrastructure here — after you've read this doc:
 - Master architecture doc: [`PAISystemArchitecture.md`](./PAISystemArchitecture.md)
 - Life OS thesis (deeper framing): [`LifeOs/LifeOsThesis.md`](./LifeOs/LifeOsThesis.md)
 - Life OS schema (the USER/ shape): [`LifeOs/LifeOsSchema.md`](./LifeOs/LifeOsSchema.md)
-- Constitutional rules (what the DA must always do): [`../PAI_SYSTEM_PROMPT.md`](../PAI_SYSTEM_PROMPT.md)
+- Operational rules (what the DA must always do): [`../../CLAUDE.md`](../../CLAUDE.md)
 
 ---
 
@@ -113,7 +113,7 @@ Read about the infrastructure here — after you've read this doc:
 
 | Document | What it covers |
 |----------|----------------|
-| [`PAI_SYSTEM_PROMPT.md`](../PAI_SYSTEM_PROMPT.md) | Constitutional rules the DA must follow |
+| [`CLAUDE.md`](../../CLAUDE.md) | Operational rules the DA must follow |
 | [`LifeOs/LifeOsThesis.md`](./LifeOs/LifeOsThesis.md) | Canonical Life OS thesis (deeper) |
 | [`LifeOs/LifeOsSchema.md`](./LifeOs/LifeOsSchema.md) | USER/ shape and frontmatter contract |
 | [`ARCHITECTURE_SUMMARY.md`](./ARCHITECTURE_SUMMARY.md) | Subsystems, pipelines, founding principles |

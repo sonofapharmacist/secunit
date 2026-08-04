@@ -1,6 +1,6 @@
 ---
 name: Art
-description: "Generates static visual content across 20+ formats via Flux, Nano Banana Pro (Gemini 3 Pro), and GPT-Image-1. Covers blog header illustrations, editorial art, Mermaid flowcharts, technical architecture diagrams, D3.js dashboards, taxonomies, timelines, 2x2 framework matrices, comparisons, annotated screenshots, recipe cards, aphorism/quote cards, conceptual maps, stat cards, comic panels, YouTube thumbnails, PAI pack icons, and brand-logo wallpapers. Named workflows: Essay, D3Dashboards, Visualize, Mermaid, TechnicalDiagrams, Taxonomies, Timelines, Frameworks, Comparisons, AnnotatedScreenshots, RecipeCards, Aphorisms, Maps, Stats, Comics, YouTubeThumbnailChecklist, AdHocYouTubeThumbnail, CreatePAIPackIcon, LogoWallpaper, RemoveBackground. SKILLCUSTOMIZATIONS loads PREFERENCES.md, CharacterSpecs.md, and SceneConstruction.md. --remove-bg flag produces transparent-background PNG (can produce black backgrounds — verify visually). Up to 14 reference images per request (5 human, 6 object Gemini API limit). Output staged to ~/Downloads/ for preview before any project directory copy. Nano Banana Pro uses --size for resolution tier 1K/2K/4K and separate --aspect-ratio. USE WHEN: art, illustration, diagram, flowchart, infographic, header image, thumbnail, visualize, generate image, mermaid, architecture diagram, comic, icon, blog art, framework diagram, D3 chart, remove background, wallpaper. NOT FOR video or animation (use Remotion). NOT FOR the user's personal portrait/headshot (use a dedicated headshot skill)."
+description: "Generates static visual content across 20+ formats via Flux, Nano Banana Pro (Gemini 3 Pro), and GPT-Image-1. Covers blog header illustrations, editorial art, Mermaid flowcharts, technical architecture diagrams, D3.js dashboards, taxonomies, timelines, 2x2 framework matrices, comparisons, annotated screenshots, recipe cards, aphorism/quote cards, conceptual maps, stat cards, comic panels, YouTube thumbnails, and PAI pack icons. Named workflows: Essay, D3Dashboards, Visualize, Mermaid, TechnicalDiagrams, Taxonomies, Timelines, Frameworks, Comparisons, AnnotatedScreenshots, RecipeCards, Aphorisms, Maps, Stats, Comics, YouTubeThumbnailChecklist, AdHocYouTubeThumbnail, CreatePAIPackIcon, RemoveBackground. SKILLCUSTOMIZATIONS loads PREFERENCES.md, CharacterSpecs.md, and SceneConstruction.md. --remove-bg flag produces transparent-background PNG (can produce black backgrounds — verify visually). Up to 14 reference images per request (5 human, 6 object Gemini API limit). Output staged to ~/Downloads/ for preview before any project directory copy. Nano Banana Pro uses --size for resolution tier 1K/2K/4K and separate --aspect-ratio. USE WHEN: art, illustration, diagram, flowchart, infographic, header image, thumbnail, visualize, generate image, mermaid, architecture diagram, comic, icon, blog art, framework diagram, D3 chart, remove background. NOT FOR video or animation (use Remotion). NOT FOR the user's personal portrait/headshot (use a dedicated headshot skill)."
 effort: medium
 ---
 
@@ -54,12 +54,10 @@ These override default behavior. If the directory does not exist, proceed with s
 | Comic panel | `Workflows/Comics.md` |
 | YouTube thumbnail | `Workflows/AdHocYouTubeThumbnail.md` or `Workflows/YouTubeThumbnailChecklist.md` |
 | PAI pack icon | `Workflows/CreatePAIPackIcon.md` |
-| brand-logo wallpaper | `Workflows/LogoWallpaper.md` |
 | Recipe card | `Workflows/RecipeCards.md` |
 | Map / conceptual map | `Workflows/Maps.md` |
 | Annotated screenshot | `Workflows/AnnotatedScreenshots.md` |
 | Background removal only | `Workflows/RemoveBackground.md` |
-| Embossed logo wallpaper | `Workflows/EmbossedLogoWallpaper.md` |
 | Generic visualization (none of the above fit) | `Workflows/Visualize.md` |
 
 **The ONLY exception:** the user explicitly says "freeform" / "skip the workflow" / "just run Generate.ts directly with this prompt: ...". Without that explicit instruction, ALWAYS pick the matching workflow and execute its mandatory steps in order — including the prompt template, the technique block, the palette, the composition rules, and the validation gate.
@@ -114,7 +112,6 @@ Never reuse the opaque thumbnail for the inline slot. Never reuse the transparen
 Route to the appropriate workflow based on the request.
 
   - Remove background from image → `Workflows/RemoveBackground.md`
-  - brand-logo wallpaper with logo integration → `Workflows/LogoWallpaper.md`
   - YouTube thumbnail checklist → `Workflows/YouTubeThumbnailChecklist.md`
   - Blog header or editorial illustration → `Workflows/Essay.md`
   - D3.js interactive chart or dashboard → `Workflows/D3Dashboards.md`

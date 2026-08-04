@@ -60,14 +60,21 @@ const TYPED_EDGE_ORDER: TypedEdgeType[] = [
 
 function edgeDescription(edge: GraphEdge): string {
   switch (edge.edgeType) {
-    case "tag":
-      return `tag:${edge.label}`;
     case "wikilink":
       return "wikilink";
     case "typed-wikilink":
       return `typed:${edge.label}`;
     case "related":
       return `related:${edge.label || "related"}`;
+    case "tag":
+      // After the 2026-07-29 layer split, `edges[]` and `adjacency` contain
+      // no tag edges — reaching here means either the lib regressed or
+      // someone constructed a tag edge by hand. Throw to surface the
+      // surprise rather than silently mask it.
+      throw new Error(
+        `tag edge encountered in edgeDescription (from=${edge.from} to=${edge.to} label=${edge.label}); ` +
+        `tag co-occurrence is no longer a traversable edge type — use tagNeighbors() instead`
+      );
   }
 }
 
@@ -186,18 +193,17 @@ function cmdRelated(query: string): void {
     }
   }
 
-  // Then the existing groups in their original order
-  const typeOrder: Array<"related" | "wikilink" | "tag"> = ["related", "wikilink", "tag"];
+  // Then the curated groups in their original order. Tag co-occurrence is no
+  // longer a traversable edge type — neighbors sharing a tag are reachable
+  // only via `tagNeighbors()` (an explicit opt-in candidate generator) and
+  // would not appear in `traverse()` results.
+  const typeOrder: Array<"related" | "wikilink"> = ["related", "wikilink"];
   for (const type of typeOrder) {
     const group = byType.get(type);
     if (!group || group.length === 0) continue;
 
     const header =
-      type === "related"
-        ? "Typed relationships"
-        : type === "wikilink"
-          ? "Wikilink references"
-          : "Tag co-occurrence";
+      type === "related" ? "Typed relationships" : "Wikilink references";
 
     console.log(`  ${header}:`);
     group.sort((a, b) => b.cumulativeWeight - a.cumulativeWeight);
@@ -209,7 +215,7 @@ function cmdRelated(query: string): void {
   }
 
   console.log("─".repeat(50));
-  console.log(`${directConnections.length} direct connections.`);
+  console.log(`${directConnections.length} direct connections (curated edges only).`);
 }
 
 function cmdStats(): void {
@@ -262,7 +268,8 @@ function cmdStats(): void {
     }
   }
 
-  // Tag clusters
+  // Tag clusters (counts only — used for the operator summary line, NOT for
+  // edge construction; tags stopped producing traversal edges on 2026-07-29)
   const tagIndex = new Map<string, number>();
   for (const node of graph.nodes.values()) {
     for (const tag of node.tags) {
@@ -279,10 +286,15 @@ function cmdStats(): void {
   const domainStr = KNOWN_DOMAINS.map((d) => `${d}: ${domainCounts[d] || 0}`).join(", ");
   console.log(`  Nodes: ${graph.nodes.size} (${domainStr})`);
 
-  const edgeStr = ["tag", "wikilink", "typed-wikilink", "related"]
-    .map((t) => `${t}: ${edgeTypeCounts[t] || 0}`)
-    .join(", ");
-  console.log(`  Edges: ${graph.edges.length} (${edgeStr})`);
+  // Curated edges only — tag co-occurrence is no longer in this stream.
+  // The three counts are shown separately so operators can distinguish
+  // explicit `related:` links from incidental body wikilinks.
+  const relatedCount = edgeTypeCounts["related"] || 0;
+  const wikilinkCount = edgeTypeCounts["wikilink"] || 0;
+  const typedWikilinkCount = edgeTypeCounts["typed-wikilink"] || 0;
+  console.log(
+    `  Edges — related: ${relatedCount}, wikilink: ${wikilinkCount}, typed-wikilink: ${typedWikilinkCount} (total: ${graph.edges.length})`
+  );
 
   console.log(`  Avg connections per node: ${avgConnections}`);
 
@@ -292,7 +304,15 @@ function cmdStats(): void {
     );
   }
 
-  console.log(`  Isolated nodes: ${isolatedNodes.length} (no connections)`);
+  console.log(`  Isolated nodes: ${isolatedNodes.length} (no connections — semantic only, tags don't count)`);
+
+  // Tag-coverage line — shows how many notes *would* see tag-neighbor
+  // candidates if any consumer opts into `tagNeighbors()`. Useful as a
+  // sanitized summary of what tag pollution used to mask.
+  const notesWithTagNeighbors = [...graph.tagIndex.values()].filter(
+    (neighbors) => neighbors.length > 0
+  ).length;
+  console.log(`  Tag co-occurrence: ${tagClusters.length} tags, ${notesWithTagNeighbors} notes have ≥1 tag neighbor`);
 
   if (tagClusters.length > 0) {
     const clusterStr = tagClusters

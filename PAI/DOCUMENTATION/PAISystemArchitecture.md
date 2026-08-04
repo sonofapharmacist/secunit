@@ -118,31 +118,26 @@ USER tier    ->  Personal customizations, private policies, overrides
 
 When PAI needs configuration, it follows a cascading lookup: check USER location first, fall back to SYSTEM location, then use defaults. USER always wins.
 
-Configuration files (`settings.json`, `CLAUDE.md`, `PAI_SYSTEM_PROMPT.md`) are directly edited. The Shadow Release system (`ShadowRelease.ts`) produces a sanitized public copy via **containment**: clone the live tree, delete sensitive zones (USER, MEMORY, private underscore-prefixed skills), overlay fixed public templates, scaffold empty USER/MEMORY, and run five security gates. PAI repo ships with zero personal data.
+Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. The secunit release system (`PAI/TOOLS/release.ts`) produces a sanitized public copy via **containment**: clone the live tree, delete sensitive zones (USER, MEMORY, private underscore-prefixed skills), overlay fixed public templates, scaffold empty USER/MEMORY, and run four gates (ADR stubs, SecretScan, identifier, Grype). PAI repo ships with zero personal data.
 
 ---
 
 ## Instruction Hierarchy -- The Model's Input Chain
 
-PAI injects instructions into Claude Code sessions through a 4-layer hierarchy. Each layer has different authority, persistence, and purpose.
+PAI injects instructions into Claude Code sessions through a 3-layer hierarchy. Each layer has different authority, persistence, and purpose. (Claude Code's own built-in system prompt sits above these as a platform layer PAI does not author; PAI's former `PAI_SYSTEM_PROMPT.md` append-layer was retired 2026-07-24 — see `DOCUMENTATION/Decisions/system-prompt-retirement.md`.)
 
 ```
-Layer 1: SYSTEM PROMPT (highest authority, survives compaction)
-  File: PAI/PAI_SYSTEM_PROMPT.md (via --append-system-prompt-file)
-  Contains: Constitutional rules -- identity, mode architecture, format mandate,
-  verification requirement, hard prohibitions, permission boundaries, security protocol.
-
-Layer 2: CLAUDE.MD (user context, loaded natively, survives compaction)
+Layer 1: CLAUDE.MD (highest PAI-authored authority, loaded natively, survives compaction)
   File: ~/.claude/CLAUDE.md (directly edited)
-  Contains: Operational procedures -- format templates, Algorithm file path,
-  operational rules, context routing table. ~139 lines.
+  Contains: Operational rules, format templates, Algorithm file path,
+  context routing table.
 
-Layer 3: @IMPORTED FILES (loaded with CLAUDE.md, survive compaction)
+Layer 2: @IMPORTED FILES (loaded with CLAUDE.md, survive compaction)
   Files: PRINCIPAL_IDENTITY, DA_IDENTITY, PROJECTS, PRINCIPAL_TELOS,
   PAI_ARCHITECTURE_SUMMARY
   Contains: Rich identity context, project routing, goals, system architecture map.
 
-Layer 4: DYNAMIC CONTEXT (session-specific, ephemeral, does NOT survive compaction)
+Layer 3: DYNAMIC CONTEXT (session-specific, ephemeral, does NOT survive compaction)
   Injected by: LoadContext.hook.ts (SessionStart)
   Contains: Relationship context, learning readback, active work summary.
 ```
@@ -160,10 +155,8 @@ Layer 4: DYNAMIC CONTEXT (session-specific, ephemeral, does NOT survive compacti
 
 | File | Purpose |
 |------|---------|
-| `PAI/PAI_SYSTEM_PROMPT.md` | Constitutional rules (system prompt layer) |
 | `~/.claude/CLAUDE.md` | Operational procedures (directly edited) |
 | `~/.claude/settings.json` | Runtime settings (directly edited) |
-| `PAI/TOOLS/pai.ts` | Launcher -- wires `--append-system-prompt-file` |
 | `hooks/LoadContext.hook.ts` | Injects startup files + dynamic context |
 | `hooks/RestoreContext.hook.ts` | Re-injects critical files after compaction |
 
@@ -189,7 +182,7 @@ Transitions from CURRENT STATE to IDEAL STATE via verifiable Ideal State Criteri
 
 **Composite skills are the organizational unit for all domain expertise.**
 
-Each skill lives in `~/.claude/skills/<Skillname>/` with a mandatory `SKILL.md` defining triggers, workflows, and tools. Skills self-activate based on user intent via `USE WHEN` descriptions parsed by Claude Code. **Naming encodes the public/private boundary** — public skills use `TitleCase` (templated, safe, ships in PAI public release); private skills use `_ALLCAPS` with a leading underscore (anything personal, identity-bound, customer-bound, or environment-specific; excluded from release tooling via `skills/_*/**` in `hooks/lib/containment-zones.ts`). Within a skill, sub-files (workflows, references, tools) always use `TitleCase` regardless of the parent skill's form.
+Each skill lives in `~/.claude/skills/<Skillname>/` with a mandatory `SKILL.md` defining triggers, workflows, and tools. Skills self-activate based on user intent via `USE WHEN` descriptions parsed by Claude Code. **Naming encodes the public/private boundary** — public skills use `TitleCase` (templated, safe, ships in PAI public release); private skills use `_ALLCAPS` with a leading underscore (anything personal, identity-bound, customer-bound, or environment-specific; excluded from release tooling via the `PRIVATE_SKILL_DIRS` allowlist and `_` prefix check in `PAI/TOOLS/release.ts`). Within a skill, sub-files (workflows, references, tools) always use `TitleCase` regardless of the parent skill's form.
 
 - **Status:** Active
 - **Location:** `~/.claude/skills/`
@@ -240,11 +233,11 @@ Agents default to inheriting the parent model (often Opus). Use the model parame
 
 **Direct editing of configuration files with shadow release for public sanitization.**
 
-Configuration files (`settings.json`, `CLAUDE.md`, `PAI_SYSTEM_PROMPT.md`) are directly edited. `PAI_CONFIG.yaml` remains as a credentials store for private skills. The Shadow Release system (`ShadowRelease.ts`) produces public staging via **containment**: rsync clone with hard exclusions → delete sensitive zones (USER, MEMORY, skills/_*) → overlay fixed public templates → scaffold → run five gates (zone deletion, identity grep, CF ID grep, trufflehog, .env strays).
+Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. `PAI_CONFIG.yaml` remains as a credentials store for private skills. The secunit release system (`PAI/TOOLS/release.ts`) produces public staging via **containment**: rsync clone with hard exclusions → delete sensitive zones (USER, MEMORY, skills/_*) → overlay fixed public templates → scaffold → run four gates (ADR stubs, SecretScan, identifier, Grype).
 
 - **Status:** Active (containment-based since v5; retired filter-walker/reverse-templating)
-- **Location:** `skills/_PAI/TOOLS/ShadowRelease.ts`, `skills/_PAI/TEMPLATES/` (settings.public.json, CLAUDE.public.md, USER/)
-- **CLI:** `--create <version>`, `--update`, `--full`, `--check [--version <v>]`
+- **Location:** `PAI/TOOLS/release.ts`
+- **CLI:** `--scan-only`, `--dry-run`, `--bump <level>`, `--verbose`, `--force`
 - **Full doc:** `PAI/DOCUMENTATION/Config/ConfigSystem.md`
 
 ### Security System
@@ -450,7 +443,7 @@ System file inventory by pipeline. When you modify a file, trace its pipeline to
 | **Observability** | `hooks/ToolActivityTracker.hook.ts`, `hooks/ToolFailureTracker.hook.ts`, `hooks/lib/observability-transport.ts` → `MEMORY/OBSERVABILITY/*.jsonl` |
 | **Pulse** | `Pulse/pulse.ts` (port 31337), `Pulse/modules/{observability,hooks,wiki,imessage,telegram,user-index,da}.ts`, `Pulse/PULSE.toml`, `Pulse/Observability/src/`, `Pulse/Assistant/module.ts` |
 | **Skills** | `skills/*/SKILL.md`, `skills/*/Workflows/*.md`, `skills/*/Tools/*.ts`, `USER/SKILLCUSTOMIZATIONS/` |
-| **Config** | `settings.json`, `CLAUDE.md`, `PAI_SYSTEM_PROMPT.md` (directly edited) → release tooling clones the live tree, deletes private zones, overlays public templates + USER scaffold into staging, runs gates |
+| **Config** | `settings.json`, `CLAUDE.md` (directly edited) → release tooling clones the live tree, deletes private zones, overlays public templates + USER scaffold into staging, runs gates |
 | **Notifications** | `Pulse/pulse.ts` voice handler → ElevenLabs API → `MEMORY/VOICE/voice-events.jsonl` |
 | **Doc Integrity** | `hooks/DocIntegrity.hook.ts` (Stop) → `hooks/handlers/DocCrossRefIntegrity.ts` + `hooks/handlers/RebuildArchSummary.ts` → `Tools/ArchitectureSummaryGenerator.ts` |
 

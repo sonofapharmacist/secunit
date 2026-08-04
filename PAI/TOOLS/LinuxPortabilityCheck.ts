@@ -54,11 +54,9 @@ const SKIP_LIST = [
 // These match the check patterns but are protected by other guards:
 //   tab-setter: guarded by !isKitty early return; /Applications path never reached on Linux
 //   lib.ts gws: guarded by Bun.which("gws") — fallback only if gws not on PATH anywhere
-//   pai.ts osascript: has try/catch + non-critical (wallpaper setter)
 const KNOWN_ACCEPTABLE = [
   "hooks/lib/tab-setter.ts",
   "PAI/PULSE/lib.ts",
-  "PAI/TOOLS/pai.ts",
 ];
 
 // ── Scan targets ──

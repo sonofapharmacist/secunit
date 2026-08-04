@@ -163,7 +163,6 @@ This file is the source of truth. Other docs reference it. When they drift, upda
 |--------------------|----------------|
 | `PAI/DOCUMENTATION/PAISystemArchitecture.md` | Master architecture — subsystems, pipelines, instruction hierarchy |
 | `PAI/DOCUMENTATION/Pulse/PulseSystem.md` | The Life Dashboard — modules, subsystems, operational details |
-| `PAI/PAI_SYSTEM_PROMPT.md` | Constitutional rules — what the DA must always do |
 | `~/Projects/PAI/README.md` | Public-facing pitch — open-source Life OS framework |
 | `PAI/USER/TELOS/` | Personal goals, mission, strategies — the ideal-state input |
 

@@ -25,7 +25,7 @@ If a skill does not follow this structure, it is not properly configured and wil
 | **Public** | `TitleCase` | `Blogging`, `Daemon`, `CreateSkill` | Templated, safe, generic, ready for public release |
 | **Private** | `_ALLCAPS` (underscore prefix, all uppercase) | `<your-release-skill>`, `_INBOX`, `_BROADCAST`, `_DOTFILES` | Anything personal, identity-bound, customer-bound, or environment-specific |
 
-**The leading underscore is the public-release boundary.** Release tooling (`hooks/lib/containment-zones.ts:47` → `skills/_*/**`) excludes every `_*` skill from the public release. Public skills are mirrored as-is into the public PAI repo and MUST contain only generic, templated content — no real names, no real domains, no real customers, no credentials, no identity-bound preferences.
+**The leading underscore is the public-release boundary.** Release tooling (`PAI/TOOLS/release.ts` — `PRIVATE_SKILL_DIRS` allowlist plus an `entry.startsWith('_')` check) excludes every `_*` skill from the public release. Public skills are mirrored as-is into the public PAI repo and MUST contain only generic, templated content — no real names, no real domains, no real customers, no credentials, no identity-bound preferences.
 
 **Sub-file naming (both public and private skills):**
 

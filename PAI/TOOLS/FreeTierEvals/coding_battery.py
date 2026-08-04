@@ -133,6 +133,57 @@ ENDPOINTS = {
         "model": "step-3.7-flash", "passage_key": "api/stepfun",
         "max_tokens": 8192, "is_reasoning": True,
     },
+    # OpenRouter discount-collection (2026-08-01 sweep)
+    # Pricing from https://openrouter.ai/collections/discounted-models
+    # GLM 5.2 supports reasoning but only at xhigh/high — no "none" suppression.
+    # Test with low effort + 16k budget to leave room for content after reasoning.
+    "or_glm52": {
+        "name": "Z.ai GLM 5.2 (OpenRouter 71% off, reasoning:low)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "z-ai/glm-5.2", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
+    "or_hy3": {
+        "name": "Tencent Hy3 (OpenRouter 65% off, reasoning:none)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "tencent/hy3", "passage_key": "api/openrouter",
+        "max_tokens": 4096, "is_reasoning": False,
+        "extra_payload": {"reasoning": {"effort": "none"}},
+    },
+    "or_longcat2": {
+        "name": "Meituan LongCat 2.0 (OpenRouter 60% off, reasoning:none)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "meituan/longcat-2.0", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "none"}},
+    },
+    "or_inkling": {
+        "name": "Thinking Machines Inkling (975B/41B MoE, OpenRouter, reasoning:none)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "thinkingmachines/inkling", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "none"}},
+    },
+    "or_inkling_small": {
+        "name": "Thinking Machines Inkling-Small (276B/12B MoE, OpenRouter, reasoning:none)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "thinkingmachines/inkling-small", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "none"}},
+    },
+    "or_m3": {
+        "name": "MiniMax M3 (OpenRouter 60% off — re-confirmation)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "minimax/minimax-m3", "passage_key": "api/openrouter",
+        "max_tokens": 4096, "is_reasoning": False,
+    },
+    "or_ling3_flash": {
+        "name": "inclusionAI Ling-3.0-flash (OpenRouter 90% off — Ling-2.6-flash not on catalog, substituted)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "inclusionai/ling-3.0-flash", "passage_key": "api/openrouter",
+        "max_tokens": 4096, "is_reasoning": False,
+    },
     # Mistral OpenAI-compat
     "small4": {
         "name": "Mistral Small 4", "fmt": "openai",
@@ -257,6 +308,26 @@ ENDPOINTS = {
         "model": "gpt-4o", "passage_key": "api/openai",
         "max_tokens": 4096, "is_reasoning": False,
     },
+    # GPT-5.6 family via OpenRouter (same price as OpenAI native per 2026-07-30
+    # pricing announcement; no direct OpenAI-native access at bench time).
+    "gpt56sol": {
+        "name": "OpenAI GPT-5.6 Sol (flagship, via OpenRouter)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "openai/gpt-5.6-sol", "passage_key": "api/openrouter",
+        "max_tokens": 4096, "is_reasoning": True,
+    },
+    "gpt56terra": {
+        "name": "OpenAI GPT-5.6 Terra (balanced, via OpenRouter)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "openai/gpt-5.6-terra", "passage_key": "api/openrouter",
+        "max_tokens": 4096, "is_reasoning": True,
+    },
+    "gpt56luna": {
+        "name": "OpenAI GPT-5.6 Luna (fast/cheap, via OpenRouter)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "openai/gpt-5.6-luna", "passage_key": "api/openrouter",
+        "max_tokens": 4096, "is_reasoning": True,
+    },
     # Cohere v2 Chat
     "north_mini_code": {
         "name": "Cohere North Mini Code 1.0", "fmt": "cohere",
@@ -365,6 +436,13 @@ def call_openai(cfg, prompt, max_tokens=None):
     if is_labs:
         payload["temperature"] = 1.0
         payload["top_p"] = 1.0
+    # OpenRouter reasoning models default to thinking (e.g. Hy3 default_effort:high).
+    # When the harness wants raw code output, suppress reasoning via the
+    # `reasoning: { effort: "none" }` payload — otherwise reasoning_content
+    # consumes the token budget and message.content is null.
+    extra = cfg.get("extra_payload") or {}
+    if extra:
+        payload.update(extra)
     data = json.dumps(payload).encode()
     req = urllib.request.Request(cfg["url"], data=data, headers={
         "Authorization": f"Bearer {api_key}",
@@ -650,10 +728,17 @@ def score_c2(response: str) -> tuple[int, list[str]]:
     # - "after the loop" / "after the retry loop"
     # - "bare fetch" / "unconditional fetch" / "extra fetch"
     # - "fetch at the end" / "final fetch" / "return fetch"
+    # - `return fetch(...)` quoted verbatim with any args (literal "url", ellipsis
+    #   paraphrase, or no args shown) — 2026-07-31: Terra/Luna both quoted the exact
+    #   fallback call as `return fetch(...)` and reasoned about its reachability, but
+    #   the old alternation only matched `return fetch(url` (literal param name),
+    #   silently zeroing both despite correctly identifying the bug site. "unreachable"
+    #   is the other case they used to describe the exact same call.
     bug_pattern = bool(re.search(
         r'line\s*42|fall\s*through|fallthrough|after\s*(?:the\s*)?(?:retry\s*)?loop|'
         r'bare\s*fetch|unconditional\s*fetch|extra\s*fetch|fetch\s*at\s*the\s*end|'
-        r'final\s*fetch\s*\(.*\)\s*$|return\s+fetch\s*\(\s*url', r, re.M | re.I))
+        r'final\s*fetch\s*\(.*\)\s*$|return\s+fetch\s*\([^)]*\)|'
+        r'(?:un)?reachable.*fetch|fetch.*(?:un)?reachable', r, re.M | re.I))
     mentions_undefined = 'undefined' in r or 'response is undefined' in r or 'no response' in r or 'unhandled' in r
 
     if not bug_pattern:
@@ -1347,7 +1432,7 @@ def run_target(target_key: str, skip_c8: bool = False, c8_only: bool = False):
             score, notes = scorer(response)
             results.append({
                 "id": tid, "label": label, "score": score, "max": max_score,
-                "elapsed": elapsed, "raw": response[:2400], "err": "", "notes": notes,
+                "elapsed": elapsed, "raw": response, "err": "", "notes": notes,
             })
             grand_total += score
             grand_possible += max_score
@@ -1370,7 +1455,7 @@ def run_target(target_key: str, skip_c8: bool = False, c8_only: bool = False):
             score, notes = run_c8(cfg, response)
             results.append({
                 "id": "C8", "label": "TTLCache vs vitest", "score": score, "max": 5,
-                "elapsed": elapsed, "raw": response[:2400], "err": "", "notes": notes,
+                "elapsed": elapsed, "raw": response, "err": "", "notes": notes,
             })
             grand_total += score
             grand_possible += 5

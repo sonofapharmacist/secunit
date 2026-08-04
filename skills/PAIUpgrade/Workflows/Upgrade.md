@@ -217,8 +217,8 @@ Scan `~/.claude/projects/-$(whoami)--claude/memory/MEMORY.md` and each reference
 
 | Condition | Action |
 |-----------|--------|
-| Redundant with system prompt or CLAUDE.md operational notes | Delete file, remove from MEMORY.md |
-| Behavioral rule not yet in system prompt | Migrate to PAI_SYSTEM_PROMPT.md (constitutional) or CLAUDE.md (operational), then delete |
+| Redundant with CLAUDE.md operational rules or notes | Delete file, remove from MEMORY.md |
+| Behavioral rule not yet encoded | Migrate to CLAUDE.md (operational rule), a hook (deterministic enforcement), or a skill (domain behavior), then delete |
 | Stale/resolved (problem fixed, project completed, info outdated) | Delete file, remove from MEMORY.md |
 | Wrong paths or outdated references | Verify against filesystem; fix or delete |
 | Valid project/user/reference, still current | Keep — update if needed |

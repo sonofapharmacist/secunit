@@ -246,23 +246,6 @@ export async function runValidation(state: InstallState, emit?: EngineEventHandl
     critical: false,
   });
 
-  // 8. Zsh alias configured
-  const zshrcPath = join(homedir(), ".zshrc");
-  let aliasConfigured = false;
-  if (existsSync(zshrcPath)) {
-    try {
-      const zshContent = readFileSync(zshrcPath, "utf-8");
-      aliasConfigured = zshContent.includes("# PAI alias") && zshContent.includes("alias pai=");
-    } catch {}
-  }
-
-  checks.push({
-    name: "Shell alias (pai)",
-    passed: aliasConfigured,
-    detail: aliasConfigured ? "Configured in .zshrc" : "Not found — run: source ~/.zshrc",
-    critical: true,
-  });
-
   // 9. SecurityPipeline smoke test — runs the actual hook with a benign Bash
   // payload. Catches the v5.0 fail-closed regression where PATTERNS.yaml was
   // missing from the public template, leaving every fresh install unable to

@@ -334,11 +334,21 @@ function detectVoice(): DetectionResult["voice"] {
 
 /**
  * Run full system detection. Safe, read-only, non-destructive.
+ *
+ * PAI_INSTALL_ROOT overrides the install target (`<root>/.claude` instead of
+ * `homedir()/.claude`), for a fresh-install smoke test that must never touch
+ * the real ~/.claude — see the 2026-07-26 incident where running the
+ * installer with only PAI_TEST_AUTOMATED=1 set (no target override) resumed
+ * a stale in-progress state and began overwriting the live tree. This is
+ * intentionally a SEPARATE variable from PAI_CONFIG_DIR (which already
+ * overrides where install-state.json lives, in engine/state.ts) — a smoke
+ * test needs to redirect both independently, pointed at the same scratch dir.
  */
 export function detectSystem(): DetectionResult {
   const home = homedir();
-  const paiDir = join(home, ".claude");
-  const configDir = process.env.PAI_CONFIG_DIR || join(home, ".config", "PAI");
+  const installRoot = process.env.PAI_INSTALL_ROOT || home;
+  const paiDir = join(installRoot, ".claude");
+  const configDir = process.env.PAI_CONFIG_DIR || join(installRoot, ".config", "PAI");
 
   return {
     os: detectOS(),
@@ -353,11 +363,15 @@ export function detectSystem(): DetectionResult {
         path: tryExec("which brew") || undefined,
       },
     },
-    existing: detectExisting(home, paiDir, configDir),
+    existing: detectExisting(installRoot, paiDir, configDir),
     principal: detectPrincipal(),
     voice: detectVoice(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    homeDir: home,
+    // homeDir drives backup-path computation (computeBackupPath in actions.ts)
+    // and every ~/-prefixed display string — it must be installRoot, not the
+    // real homedir(), or a PAI_INSTALL_ROOT-scoped smoke test would still
+    // compute backup/display paths against the real home.
+    homeDir: installRoot,
     paiDir,
     configDir,
   };

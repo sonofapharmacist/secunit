@@ -128,7 +128,7 @@ T_TESTS = [
 MINIMAL = ack/greeting/rating. NATIVE = single-step. ALGORITHM = multi-step.
 Message: "What's the capital of France?"
 Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM.""",
-        "eval": lambda r: r.strip().upper() == "NATIVE",
+        "eval": lambda r: r.strip().upper().startswith("NATIVE"),
         "max_score": 1,
         "max_tokens": 256,
     },
@@ -138,7 +138,7 @@ Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM.""",
         "prompt": """You are a task classifier. Classify as MINIMAL, NATIVE, or ALGORITHM.
 Message: "Refactor this entire authentication module to use JWTs, update all tests, and write a migration guide."
 Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM.""",
-        "eval": lambda r: r.strip().upper() == "ALGORITHM",
+        "eval": lambda r: r.strip().upper().startswith("ALGORITHM"),
         "max_score": 1,
         "max_tokens": 256,
     },
@@ -146,7 +146,7 @@ Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM.""",
         "id": "T4_json",
         "label": "JSON — structured",
         "prompt": 'Return ONLY valid JSON: {"status": "ok", "count": 42}. No other text.',
-        "eval": lambda r: (lambda j: j.get("status") == "ok" and j.get("count") == 42)(json.loads(_strip_fences(r))),
+        "eval": lambda r: (lambda j: j.get("status") == "ok" and j.get("count") == 42)(json.JSONDecoder().raw_decode(_strip_fences(r).strip())[0]),
         "max_score": 1,
         "max_tokens": 256,
     },

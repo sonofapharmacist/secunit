@@ -1,11 +1,10 @@
 {
   "version": 1,
-  "lastUpdated": "2026-07-23T00:31:41.309Z",
+  "lastUpdated": "2026-08-01T16:55:43.633Z",
   "algorithmVersion": "7.1.1",
   "subsystems": [
     "Life OS thesis (what PAI is for)",
     "Life OS schema (USER/ shape)",
-    "System prompt (constitutional rules)",
     "System architecture (master doc)",
     "Architecture summary",
     "Algorithm system",

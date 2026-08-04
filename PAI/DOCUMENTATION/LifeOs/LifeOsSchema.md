@@ -234,7 +234,7 @@ USER/BoardGames.md        # new taste file
 - **Private content lives in `USER/`.** Never committed to the public PAI repo.
 - **Templates live in `PAI/TEMPLATES/User/`.** Shipped with every PAI release. This is the scaffold a new PAI user starts with.
 - **This spec (`LIFEOSSCHEMA.md`) is the contract.** Public. Referenced by templates, Pulse renderer docs, Interview prompts.
-- **`ShadowRelease.ts` never reads USER/.** It reads `Templates/User/` + this spec.
+- **`PAI/TOOLS/release.ts` never reads USER/.** It strips `PAI/USER/` and overlays public templates + this spec.
 
 New PAI user experience:
 1. Clone PAI → `Templates/User/` is copied to `USER/`

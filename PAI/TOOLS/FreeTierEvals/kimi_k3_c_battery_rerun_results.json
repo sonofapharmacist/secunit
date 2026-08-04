@@ -1,0 +1,131 @@
+{
+  "model": "moonshotai/kimi-k3",
+  "provider": "openrouter",
+  "temperature": 1,
+  "max_tokens": 65536,
+  "date": "2026-07-28",
+  "c_battery": {
+    "battery": "C",
+    "score": 23,
+    "max": 27,
+    "wall": 2422.347626686096,
+    "results": [
+      {
+        "id": "C1",
+        "label": "TS-strict type narrowing",
+        "score": 3,
+        "max": 3,
+        "elapsed": 92.61756157875061,
+        "raw": "```typescript\nimport { Buffer } from 'node:buffer';\n\nexport type ParseResult =\n  | { valid: true; token: string }\n  | { valid: false; reason: 'missing' | 'malformed' | 'expired' };\n\nconst BEARER_PATTERN = /^Bearer\\s+(\\S+)$/i;\n\nfunction readExpClaim(token: string): number | null {\n  try {\n    const json: unknown = JSON.parse(\n      Buffer.from(token, 'base64url').toString('utf8'),\n    );\n    if (typeof json === 'object' && json !== null && 'exp' in json) {\n      const exp: unknown = json.exp;\n      if (typeof exp === 'number') {\n        return exp;\n      }\n    }\n  } catch {\n    // Token is not decodable base64url JSON; no exp claim is readable.\n  }\n  return null;\n}\n\nexport function parseAuthHeader(header: string, nowMs: number): ParseResult {\n  const trimmed = header.trim();\n  if (trimmed === '') {\n    return { valid: false, reason: 'missing' };\n  }\n\n  const match = BEARER_PATTERN.exec(trimmed);\n  if (match === null) {\n    return { valid: false, reason: 'malformed' };\n  }\n\n  const token = match[1];\n  if (typeof token !== 'string') {\n    return { valid: false, reason: 'malformed' };\n  }\n\n  const exp = readExpClaim(token);\n  if (exp !== null && exp * 1000 <= nowMs) {\n    return { valid: false, reason: 'expired' };\n  }\n\n  return { valid: true, token };\n}\n\nexport function describeParseResult(result: ParseResult): string {\n  if (result.valid) {\n    return `valid token: ${result.token}`;\n  }\n  switch (result.reason) {\n    case 'missing':\n      return 'authorization header is missing';\n    case 'malformed':\n      return 'authorization header is malformed';\n    case 'expired':\n      return 'token is expired';\n    default:\n      return assertNever(result);\n  }\n}\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled ParseResult variant: ${JSON.stringify(value)}`);\n}\n```",
+        "err": "",
+        "notes": [
+          "reject paths: missing=True malformed=True expired=True",
+          "never exhaustive check present"
+        ],
+        "cost": 0.065922,
+        "reasoning_tokens": 3832
+      },
+      {
+        "id": "C2",
+        "label": "Debug from stack trace + repro",
+        "score": 3,
+        "max": 3,
+        "elapsed": 1574.1105632781982,
+        "raw": "## The bug\n\n`fetch` only rejects on network-level failures \u2014 an HTTP 500 **resolves normally**. Now trace the two failure paths:\n\n1. **5xx on the final attempt:** the guard `i < attempts - 1` is false, so execution falls out of the `if` and **`return`s the 500 as if it succeeded**.\n2. **Thrown error on a non-final attempt:** silently swallowed \u2014 no log, not even a backoff; only the last one is rethrown.\n3. **`return fetch(url, opts)` (line 42) is dead code** for `attempts >= 1` \u2014 the loop body always returns, throws, or `continue`s, and `continue` is impossible on the last pass. It's only reachable when `attempts <= 0`, and it exists because `noImplicitReturns` complained. So there is **no real \"retries exhausted\" behavior** \u2014 exhaustion leaks out to the caller as an ordinary return value.\n\nThat's the root cause: **\"we never got a usable response\" is never turned into an exception.** The worker at `worker.ts:118` then runs `response.headers.get(...)` on whatever came back. In Bun/JSC, `undefined is not an object (evaluating 'response.headers.get')` means the thing being dereferenced **wasn't a real `Response`** \u2014 even a 500 Response has a `Headers` object. So on the failure path the worker ends up with a non-Response (an `undefined` from its error branch, or a build of this file where the fall-through returns nothing \u2014 note your trace places execution *at line 42*, past the loop).\n\n**Why intermittent:** only runs that hit a 500 (~2% \u2248 1/50) ever exercise the retry/exhaustion path; everything else returns a 200 on attempt 0. The rejection then escapes `run()` unhandled \u2192 Bun prints the trace and exits \u2192 the worker just \"disappears.\"\n\n**Contributing factor:** the retried 500 response is discarded *without draining or cancelling its body*. In Bun the keep-alive socket isn't released until you do, and hammering an origin with undrained responses is a known source of intermittent, production-only flakiness on retried requests \u2014 a path that runs at exactly your 2%.\n\n## Minimal fix\n\nMake the last attempt authoritative, throw on 5xx exhaustion, and delete the hidden 4th fetch:\n\n```typescript\nexport async function fetchWithRetry(url: string, opts: RequestInit = {}, attempts = 3): Promise<Response> {\n  for (let i = 0; i < attempts; i++) {\n    try {\n      const response = await fetch(url, opts);\n      if (response.status >= 500) {\n        if (i === attempts - 1) throw ",
+        "err": "",
+        "notes": [
+          "full diagnosis + idiomatic fix + repro"
+        ],
+        "cost": 0.813195,
+        "reasoning_tokens": 53113
+      },
+      {
+        "id": "C3",
+        "label": "Multi-file refactor",
+        "score": 3,
+        "max": 3,
+        "elapsed": 84.51142597198486,
+        "raw": "Only `a.ts` changes and `auth.ts` is new \u2014 `b.ts` and `c.ts` are byte-for-byte identical, since `b` already just forwards an opaque `Authorization` value. All four shown for completeness:\n\n```typescript\n// auth.ts (new)\n/** A complete value for an HTTP `Authorization` header (scheme + credentials). */\nexport type AuthorizationHeader = string;\n\n/** Builds a Basic-auth `Authorization` header value from a username/password pair. */\nexport function basicAuth(user: string, pw: string): AuthorizationHeader {\n  const token = Buffer.from(`${user}:${pw}`).toString(\"base64\");\n  return `Basic ${token}`;\n}\n```\n\n```typescript\n// a.ts\nimport { b } from \"./b\";\nimport { basicAuth } from \"./auth\";\n\nexport function getProfile(user: string, pw: string): Promise<unknown> {\n  if (!user || !pw) throw new Error(\"missing creds\");\n  return b(basicAuth(user, pw));\n}\n```\n\n```typescript\n// b.ts (unchanged)\nimport { c } from \"./c\";\nexport function b(auth: string): Promise<unknown> {\n  return c({ headers: { Authorization: auth } });\n}\n```\n\n```typescript\n// c.ts (unchanged)\nexport function c(opts: { headers: Record<string, string> }): Promise<unknown> {\n  return fetch(\"https://api.example.com/me\", opts).then(r => r.json());\n}\n```\n\nNotes on why behavior is preserved:\n\n- **Same validation order**: the `missing creds` throw still happens before any header construction, in `a.ts`.\n- **Same header value**: `basicAuth` performs the exact `Buffer.from(\\`${user}:${pw}\\`).toString(\"base64\")` + `Basic ` prefix construction that was inline in `a.ts`.\n- **`Buffer` is fully contained**: only `auth.ts` references `Buffer`; `a.ts` and `b.ts` see only strings.\n- **`b.ts` stays agnostic**: it still accepts any `auth: string` and forwards it \u2014 no import of `auth.ts`, no knowledge of Basic. (I deliberately did *not* have `b.ts` import the `AuthorizationHeader` alias, to keep that boundary decoupled.)\n- **Signatures untouched**: `getProfile`, `b`, and `c` are exactly as before; the only new annotation is the `AuthorizationHeader` alias documenting what `basicAuth` returns.",
+        "err": "",
+        "notes": [
+          "all 3 files correct, signatures preserved, Buffer only in auth.ts",
+          "clean module boundary + consistent relative imports"
+        ],
+        "cost": 0.0364662,
+        "reasoning_tokens": 1841
+      },
+      {
+        "id": "C4",
+        "label": "Test generation",
+        "score": 4,
+        "max": 5,
+        "elapsed": 143.63212871551514,
+        "raw": "The root cause is that rule 3 (drop `null`/`undefined`) is never implemented \u2014 the code just runs `String()` over everything. That single missing branch produces several distinct, separately observable failure modes, which is what the tests below target. (Rules 1, 2, and 4 already behave correctly in the buggy code, so no failing test can be written for them.)\n\n```typescript\nimport { describe, it, expect } from \"vitest\";\nimport { normalizeRecords } from \"./buggy\";\n\ndescribe(\"normalizeRecords\", () => {\n  it('drops keys with null values instead of stringifying them to \"null\"', () => {\n    const [out] = normalizeRecords([{ id: 1, email: null }]);\n\n    expect(out).toEqual({ id: \"1\" }); // buggy: { id: \"1\", email: \"null\" }\n    expect(out).not.toHaveProperty(\"email\");\n  });\n\n  it('drops keys with undefined values instead of stringifying them to \"undefined\"', () => {\n    const [out] = normalizeRecords([{ id: 1, nickname: undefined }]);\n\n    expect(out).toEqual({ id: \"1\" }); // buggy: { id: \"1\", nickname: \"undefined\" }\n    expect(out).not.toHaveProperty(\"nickname\");\n  });\n\n  it(\"returns an empty object for a record whose fields are all null or undefined\", () => {\n    const [out] = normalizeRecords([{ a: null, b: undefined }]);\n\n    expect(out).toEqual({}); // buggy: { a: \"null\", b: \"undefined\" }\n    expect(Object.keys(out)).toHaveLength(0);\n  });\n\n  it('drops a null \"deleted\" flag from the output while still keeping the record', () => {\n    // Only `deleted === true` should skip the record; a null flag means\n    // \"not deleted\", but the key itself must still be dropped from output.\n    const result = normalizeRecords([{ id: 2, deleted: null }]);\n\n    expect(result).toHaveLength(1);\n    expect(result[0]).toEqual({ id: \"2\" }); // buggy: { id: \"2\", deleted: \"null\" }\n  });\n\n  it(\"strips nullable DB columns so the literal string \\\"null\\\" is never posted to /sync\", () => {\n    // Mirrors the production call site: SELECT * returns NULL columns,\n    // and the cleaned payload goes straight into the API request body.\n    const rows = [\n      { id: 1, name: \"Ada\", phone: null, deleted_at: null },\n      { id: 2, name: \"Grace\", phone: \"555-0100\", deleted_at: null },\n      { id: 3, name: \"Lin\", phone: null, deleted: true },\n    ];\n\n    const cleaned = normalizeRecords(rows);\n\n    expect(cleaned).toEqual([\n      { id: \"1\", name: \"Ada\" },\n      { id: \"2\", name: \"Grace\", phone: \"5",
+        "err": "",
+        "notes": [
+          "found 5 tests (it=5 test=0)",
+          "bug patterns: deleted=True null/drop=True proto=False"
+        ],
+        "cost": 0.077334,
+        "reasoning_tokens": 4210
+      },
+      {
+        "id": "C5",
+        "label": "REST API design",
+        "score": 3,
+        "max": 5,
+        "elapsed": 194.57477450370789,
+        "raw": "# API Key Management Service \u2014 REST API Design\n\nBase path: `/v1`\n\n## 1. Endpoints\n\n| Method | Path | JWT scope | Success | Description |\n|---|---|---|---|---|\n| `POST` | `/v1/keys` | `keys:write` | `201` | Create a key. Full secret returned **once**. |\n| `GET` | `/v1/keys` | `keys:read` | `200` | List keys (metadata + prefix only). |\n| `DELETE` | `/v1/keys/:id` | `keys:write` | `200` | Revoke a key (sets `revokedAt`). |\n| `POST` | `/v1/keys/:id/rotate` | `keys:write` | `201` | Atomically revoke + reissue under the same name. |\n\nRevoke is `DELETE`, not `POST /keys/:id/revoke` \u2014 revocation is exactly the state transition `DELETE` expresses (the row remains for audit, but the credential is dead). There is no `POST /keys/:id/revoke` route.\n\n---\n\n## 2. Types\n\n```typescript\n// \u2500\u2500\u2500 Storage layer. NEVER serialized to a client. \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ninterface ApiKeyRecord {\n  id: string;              // \"key_\" + ULID\n  name: string;            // unique among ACTIVE keys (enforced by DB, see \u00a75)\n  prefix: string;          // first 8 chars of the secret \u2014 safe to display\n  hash: string;            // sha256 hex of the secret \u2014 never leaves the server\n  scopes: string[];\n  createdAt: string;       // ISO 8601 UTC\n  lastUsedAt: string | null;\n  revokedAt: string | null;\n}\n\n// \u2500\u2500\u2500 Public DTO. The ONLY key shape that ever crosses the wire. \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// `hash` is absent at the type level \u2014 leaking it is a compile error,\n// not a code-review finding. The full secret is a *sibling field* on the\n// create/rotate responses, never a property of this object, so no\n// serialization path can accidentally include it in a list.\ninterface ApiKeyPublic {\n  id: string;\n  name: string;\n  prefix: string;\n  scopes: string[];\n  createdAt: string;\n  lastUsedAt: string | null;\n  revokedAt: string | null;\n}\n\n// \u2500\u2500\u2500 Requests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ninterface CreateApiKeyRequest {\n  name: string;            // 1\u201364 chars\n  scopes: string[];        // must be a subset of the caller's own scopes\n}\n\n// Rotate takes no body: name and scopes are inherited from the old key.\n\n// \u2500\u2500\u2500 Responses \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ninterface CreateApiKeyResponse {\n  key: ApiKeyPublic;\n  secret: string;          // FULL key value. Returned exactly once, here only.\n}\n\ninterface ListApiKeysResponse {\n  keys: ApiKeyPublic[];\n  nextC",
+        "err": "",
+        "notes": [
+          "secret handling (no full key/hash in list): True",
+          "auth (JWT + scope): True",
+          "paths: POST=True GET=False DEL/PATCH=True rotate=True wrong=True",
+          "error contract (envelope + status codes): True",
+          "atomic rotation: atomic=True 409=True two_calls=True"
+        ],
+        "cost": 0.1362942,
+        "reasoning_tokens": 5991
+      },
+      {
+        "id": "C6",
+        "label": "Bash / shell scripting",
+        "score": 2,
+        "max": 3,
+        "elapsed": 239.14932942390442,
+        "raw": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nbackup-and-rotate() {\n    local keep=5\n    local backup_dir=\"/backup\"\n\n    # ---- validate input ------------------------------------------------\n    if (( $# != 1 )); then\n        printf 'backup-and-rotate: usage: backup-and-rotate DIRECTORY\\n' >&2\n        return 2\n    fi\n\n    local src=\"$1\"\n\n    if [[ ! -d \"$src\" ]]; then\n        printf 'backup-and-rotate: error: %q is not an existing directory\\n' \"$src\" >&2\n        return 1\n    fi\n\n    if [[ ! -d \"$backup_dir\" ]]; then\n        printf 'backup-and-rotate: creating %q\\n' \"$backup_dir\" >&2\n        mkdir -p -- \"$backup_dir\" || {\n            printf 'backup-and-rotate: error: cannot create %q\\n' \"$backup_dir\" >&2\n            return 1\n        }\n    fi\n\n    # ---- create archive via temp file, then mv into place --------------\n    # (a failed tar never leaves a half-written .tar.gz for rotation to count)\n    local base parent stamp dest tmp\n    base=\"$(basename -- \"$src\")\"\n    parent=\"$(dirname -- \"$src\")\"\n    stamp=\"$(date +%Y%m%d-%H%M%S)\"\n    dest=\"${backup_dir}/${base}-${stamp}.tar.gz\"\n\n    tmp=\"$(mktemp \"${backup_dir}/.backup-tmp.XXXXXXXX\")\" || {\n        printf 'backup-and-rotate: error: mktemp failed in %q\\n' \"$backup_dir\" >&2\n        return 1\n    }\n\n    printf 'backup-and-rotate: archiving %q -> %q\\n' \"$src\" \"$dest\" >&2\n    if ! tar -czf \"$tmp\" -C \"$parent\" -- \"./${base}\"; then\n        printf 'backup-and-rotate: error: tar failed on %q\\n' \"$src\" >&2\n        rm -f -- \"$tmp\"\n        return 1\n    fi\n\n    if ! mv -- \"$tmp\" \"$dest\"; then\n        printf 'backup-and-rotate: error: could not move archive to %q\\n' \"$dest\" >&2\n        rm -f -- \"$tmp\"\n        return 1\n    fi\n    printf 'backup-and-rotate: created %q (%s bytes)\\n' \"$dest\" \"$(stat -c %s -- \"$dest\")\" >&2\n\n    # ---- rotation: keep only the $keep newest *.tar.gz -----------------\n    local list\n    list=\"$(mktemp)\" || {\n        printf 'backup-and-rotate: error: mktemp failed\\n' >&2\n        return 1\n    }\n\n    # Null-delimited end to end: -print0 | sort -z | read -d ''\n    if ! find \"$backup_dir\" -maxdepth 1 -type f -name '*.tar.gz' -printf '%T@ %p\\0' \\\n            | sort -z -rn > \"$list\"; then\n        printf 'backup-and-rotate: error: could not enumerate %q\\n' \"$backup_dir\" >&2\n        rm -f -- \"$list\"\n        return 1\n    fi\n\n    local count=0 record victim\n    while IFS= read -r -d '' record; do\n        (( c",
+        "err": "",
+        "notes": [
+          "null-delimited rotation, no trap or atomic write"
+        ],
+        "cost": 0.180966,
+        "reasoning_tokens": 10707
+      },
+      {
+        "id": "C8",
+        "label": "TTLCache vs vitest",
+        "score": 5,
+        "max": 5,
+        "elapsed": 93.75184321403503,
+        "raw": "```typescript\nexport type CacheOptions<V> = {\n  maxEntries: number;\n  now?: () => number;\n  defaultTtlMs?: number;\n};\n\ntype Entry<V> = {\n  value: V;\n  /** Timestamp (in `now()` units) at which the entry stops being visible. */\n  expiresAt: number;\n};\n\nexport class TTLCache<K, V> {\n  private readonly maxEntries: number;\n  private readonly now: () => number;\n  private readonly defaultTtlMs?: number;\n\n  /**\n   * JS Maps iterate in insertion order, so the first key is always the\n   * least-recently-used one: `get` and `set` re-insert touched keys at the\n   * end, and eviction removes from the front.\n   */\n  private readonly entries = new Map<K, Entry<V>>();\n\n  constructor(opts: CacheOptions<V>) {\n    if (!Number.isInteger(opts.maxEntries) || opts.maxEntries < 1) {\n      throw new RangeError(\"TTLCache: maxEntries must be a positive integer\");\n    }\n    this.maxEntries = opts.maxEntries;\n    this.now = opts.now ?? Date.now;\n    this.defaultTtlMs = opts.defaultTtlMs;\n  }\n\n  get(key: K): V | undefined {\n    const entry = this.entries.get(key);\n    if (entry === undefined) return undefined;\n\n    if (this.isExpired(entry)) {\n      this.entries.delete(key); // lazy cleanup\n      return undefined;\n    }\n\n    // Mark as most-recently-used by moving it to the end of the map.\n    this.entries.delete(key);\n    this.entries.set(key, entry);\n    return entry.value;\n  }\n\n  set(key: K, value: V, ttlMs?: number): void {\n    const ttl = ttlMs ?? this.defaultTtlMs;\n    const expiresAt =\n      ttl === undefined ? Number.POSITIVE_INFINITY : this.now() + ttl;\n\n    // Delete first so an existing key gets a fresh TTL *and* moves to the\n    // most-recently-used position.\n    this.entries.delete(key);\n    this.entries.set(key, { value, expiresAt });\n\n    this.purgeExpired();\n    while (this.entries.size > this.maxEntries) {\n      // First key in iteration order is the least-recently-used one.\n      const oldest = this.entries.keys().next();\n      if (oldest.done) break; // unreachable, but keeps the types honest\n      this.entries.delete(oldest.value);\n    }\n  }\n\n  delete(key: K): boolean {\n    return this.entries.delete(key);\n  }\n\n  clear(): void {\n    this.entries.clear();\n  }\n\n  get size(): number {\n    this.purgeExpired();\n    return this.entries.size;\n  }\n\n  private isExpired(entry: Entry<V>): boolean {\n    return this.now() >= entry.expiresAt;\n  }\n\n  private purgeExpired(): void {",
+        "err": "",
+        "notes": [
+          "vitest: 8 passed, 0 failed",
+          "all tests pass, no 'any'"
+        ],
+        "cost": 0.0774732,
+        "reasoning_tokens": 4052
+      }
+    ]
+  },
+  "cost_tracked_total": 1.3876506,
+  "credits_before": {
+    "total_credits": 20,
+    "total_usage": 10.169742325
+  },
+  "credits_after": {
+    "total_credits": 20,
+    "total_usage": 11.479919725
+  },
+  "actual_spend_usage_delta": 1.3101774000000006
+}

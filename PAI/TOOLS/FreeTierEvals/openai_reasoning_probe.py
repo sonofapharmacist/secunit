@@ -53,7 +53,32 @@ ENDPOINTS = {
         "passage_key": "api/openai",
         "is_reasoning": False,
     },
+    # GPT-5.6 family via OpenRouter (same price as OpenAI native per 2026-07-30
+    # pricing announcement; no direct OpenAI-native access at bench time).
+    "gpt56sol": {
+        "name": "OpenAI GPT-5.6 Sol (flagship, via OpenRouter)",
+        "model": "openai/gpt-5.6-sol",
+        "passage_key": "api/openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "is_reasoning": True,
+    },
+    "gpt56terra": {
+        "name": "OpenAI GPT-5.6 Terra (balanced, via OpenRouter)",
+        "model": "openai/gpt-5.6-terra",
+        "passage_key": "api/openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "is_reasoning": True,
+    },
+    "gpt56luna": {
+        "name": "OpenAI GPT-5.6 Luna (fast/cheap, via OpenRouter)",
+        "model": "openai/gpt-5.6-luna",
+        "passage_key": "api/openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "is_reasoning": True,
+    },
 }
+
+DEFAULT_URL = "https://api.openai.com/v1/chat/completions"
 
 
 def resolve_key(passage_key: str) -> str:
@@ -261,19 +286,21 @@ MAX_SCORE_TOTAL = sum(t["max_score"] for t in TESTS)  # 17
 def call_openai(target_key: str, prompt: str, max_tokens: int, is_reasoning: bool) -> tuple[str, float, str]:
     cfg = ENDPOINTS[target_key]
     api_key = resolve_key(cfg["passage_key"])
+    url = cfg.get("url", DEFAULT_URL)
+    token_field = "max_completion_tokens" if url == DEFAULT_URL else "max_tokens"
 
     # Reasoning models need bigger budgets; older models (gpt-4.1, gpt-4o) don't need this
     effective_max = max(max_tokens, 2048) if is_reasoning else max_tokens
 
     payload = {
         "model": cfg["model"],
-        "max_completion_tokens": effective_max,
+        token_field: effective_max,
         "messages": [{"role": "user", "content": prompt}],
     }
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        url,
         data=data,
         headers={
             "Authorization": f"Bearer {api_key}",

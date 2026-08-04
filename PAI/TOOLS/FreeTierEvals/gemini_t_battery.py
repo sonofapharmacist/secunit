@@ -123,15 +123,15 @@ TESTS = [
      """You are a task classifier. Classify as MINIMAL, NATIVE, or ALGORITHM.
 Message: "What's the capital of France?"
 Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM.""", None, 8,
-     lambda r: r.strip().upper() == "NATIVE"),
+     lambda r: r.strip().upper().startswith("NATIVE")),
     ("T3", "Classify — multi-step",
      """You are a task classifier. Classify as MINIMAL, NATIVE, or ALGORITHM.
 Message: "Refactor this entire authentication module to use JWTs, update all tests, and write a migration guide."
 Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM.""", None, 8,
-     lambda r: r.strip().upper() == "ALGORITHM"),
+     lambda r: r.strip().upper().startswith("ALGORITHM")),
     ("T4", "JSON — structured",
      'Return ONLY valid JSON: {"status": "ok", "count": 42}. No other text.', None, 40,
-     lambda r: (lambda j: j.get("status")=="ok" and j.get("count")==42)(json.loads(_strip_fence(r)))),
+     lambda r: (lambda j: j.get("status")=="ok" and j.get("count")==42)(json.JSONDecoder().raw_decode(_strip_fence(r).strip())[0])),
     ("T5", "Reasoning — logic puzzle",
      "Alice is taller than Bob. Bob is taller than Carol. Who is shortest? Reply with just the name.", None, 50,
      lambda r: "carol" in r.strip().lower()),

@@ -21,7 +21,25 @@ type PromptChoiceOption = {
 };
 
 function isAutomated(): boolean {
-  return process.env.PAI_TEST_AUTOMATED === "1" || process.stdin.isTTY === false;
+  // `isTTY` is `true` for a real terminal, but NOT reliably `false` for every
+  // non-interactive stream — Bun (and Node in some configurations) reports
+  // `undefined` for piped/redirected stdin rather than `false`. Checking
+  // `=== false` missed that case: a genuinely non-interactive pipe with no
+  // env flags set would fall through to `rl.question` and could resolve an
+  // answer from whatever happened to be on stdin (e.g. an empty line reading
+  // as "accept default"). `!== true` treats anything that isn't confirmed to
+  // be a real terminal as non-interactive, which is the safe direction here.
+  return process.env.PAI_TEST_AUTOMATED === "1" || process.stdin.isTTY !== true;
+}
+
+// Destructive-action confirmations (e.g. "resume into an existing install,
+// which deletes and overwrites live files") must not be answered by the same
+// flag that auto-defaults config-value prompts. PAI_TEST_AUTOMATED exists so
+// automated/CI runs don't hang on "what should we call your DA?" — it was
+// never meant to also mean "yes, overwrite the live tree." A separate,
+// narrowly-named opt-in is required for those.
+function isExplicitlyConfirmed(): boolean {
+  return process.env.PAI_CONFIRM_OVERWRITE === "1";
 }
 
 /**
@@ -197,13 +215,37 @@ export async function promptChoiceWithPreview(
 
 /**
  * Prompt for yes/no confirmation.
+ *
+ * requireExplicit: set this for any confirmation that gates a destructive or
+ * hard-to-reverse action (overwriting/deleting existing files, resuming into
+ * an existing install, etc). When set, PAI_TEST_AUTOMATED / non-TTY stdin no
+ * longer auto-answers the question — only PAI_CONFIRM_OVERWRITE=1 does, and
+ * everything else (including plain automated mode with no explicit opt-in)
+ * fails closed to `false`, never to `defaultYes`. This deliberately does NOT
+ * fall back to readline in automated mode even if stdin happens to be a TTY,
+ * since the whole point is that automation must not silently consent to a
+ * destructive action it never explicitly asked for.
  */
 export async function promptConfirm(
   question: string,
   defaultYes: boolean = true,
-  daName?: string
+  daName?: string,
+  requireExplicit: boolean = false
 ): Promise<boolean> {
-  if (isAutomated()) return defaultYes;
+  if (requireExplicit) {
+    // isExplicitlyConfirmed() is gated on isAutomated() too — PAI_CONFIRM_OVERWRITE=1
+    // is meant to be automation's explicit opt-in, not a standing bypass. Without
+    // this gate, a real human at a real interactive terminal with the var set in
+    // their shell (leftover from testing, a dotfile, etc.) would get silently
+    // auto-resumed with no prompt shown at all — the exact "silent consent to a
+    // destructive action" shape this fix exists to prevent, just under a
+    // different trigger. Found by DualCheck's MiniMax M3 pass, verified against
+    // this function before fixing.
+    if (isAutomated() && isExplicitlyConfirmed()) return true;
+    if (isAutomated()) return false;
+  } else if (isAutomated()) {
+    return defaultYes;
+  }
 
   const rl = readline.createInterface({
     input: process.stdin,

@@ -20,7 +20,7 @@
 
 # MODES
 
-Mode selection rules and subagent constraints are defined in the system prompt (PAI_SYSTEM_PROMPT.md). Format templates for each mode are below.
+Mode and tier are selected by the `PromptProcessing` hook's classifier, which writes a `MODE: … | TIER: …` line into context on every prompt. Read that line and obey it; `/e1`–`/e5` in the prompt overrides it. Subagents always use NATIVE. Format templates for each mode are below.
 
 ## NATIVE MODE
 FOR: Simple tasks that won't take much effort or time.
@@ -75,7 +75,7 @@ FOR: Multi-step, complex, or difficult work. Troubleshooting, debugging, buildin
 - **Open ISA check at Algorithm OBSERVE.** Run `grep -r "^phase:" PAI/MEMORY/WORK/*/ISA.md | grep -v complete` before creating a new ISA. Surface any hits to GP first — ISA is authoritative state, not PROJECTS_TODO.
 - **Surface controls as behavior, not flags.** When building skills, workflows, or tools: if a parameter's value can be inferred from context (content length, query complexity, active projects, model name, file type), infer it. Expose the flag for override, not as the default path. User states intent; system figures out the mechanism. Applied: Knowledge `--light` auto-detects under 800 words. Apply this test to every new control you're about to make manual.
 - **Scope gate before ISCs at E2+ OBSERVE.** After INTENT ECHO, answer four questions from session context: (1) what changes in the world? (2) how could this be wrong to build? (3) what's explicitly excluded? (4) what's the evidence it worked? Auto-confirm when unambiguous — output `🌡️ SCOPE GATE: CONFIRMED`. Surface unclear answers to GP. Resumed sessions add: is the reason still true? Better approach now? E1 exempt. Lands in ISA `## Decisions`.
-- **ProofReader for high-stakes writes.** **Always** invoke after `Write` to `CLAUDE.md`, `PAI_SYSTEM_PROMPT.md`, `PAI/ALGORITHM/v*.md`, or content destined for external sharing (your-domain.example.com, blog drafts, public READMEs). **Author's call** for MEDIUM-stakes files (knowledge entries at `${PAI_DIR}/MEMORY/KNOWLEDGE/**`, ADRs at `${PAI_DIR}/DOCUMENTATION/Decisions/`, project docs going public) — invoke when author requests or before commit. **Never auto-invoke** on working memory entries (`MEMORY/WORK/**`), transient ISAs, auto-state files, or internal skill docs. **Once per file per session, not per edit.** Pattern: `Agent(subagent_type="ProofReader", prompt="Review <path>. Context: <brief>. Stakes: high|medium|low.")`. Six lenses: consistency, citations, dates, convention, tone, staleness. Read-only — never auto-fix. Defaults to Haiku (cheap, mechanical); override `model:` for high-stakes doctrinal reviews. If output shows thinking-tag leakage, lower effortLevel to medium.
+- **ProofReader for high-stakes writes.** **Always** invoke after `Write` to `CLAUDE.md`, `PAI/ALGORITHM/v*.md`, or content destined for external sharing (your-domain.example.com, blog drafts, public READMEs). **Author's call** for MEDIUM-stakes files (knowledge entries at `${PAI_DIR}/MEMORY/KNOWLEDGE/**`, ADRs at `${PAI_DIR}/DOCUMENTATION/Decisions/`, project docs going public) — invoke when author requests or before commit. **Never auto-invoke** on working memory entries (`MEMORY/WORK/**`), transient ISAs, auto-state files, or internal skill docs. **Once per file per session, not per edit.** Pattern: `Agent(subagent_type="ProofReader", prompt="Review <path>. Context: <brief>. Stakes: high|medium|low.")`. Six lenses: consistency, citations, dates, convention, tone, staleness. Read-only — never auto-fix. Defaults to Haiku (cheap, mechanical); override `model:` for high-stakes doctrinal reviews. If output shows thinking-tag leakage, lower effortLevel to medium.
 
 ### Operational Notes
 - **Model tier monitoring (post-deploy).** Tier B — fail-safe rate: `jq 'select(.source=="fail-safe")' ~/.claude/PAI/MEMORY/OBSERVABILITY/prompt-processing.jsonl | wc -l` → tripwire: >3 in a session or >5% weekly = revert `level:'fast'`→`'standard'`. Tier D — model distribution: `jq -r 'select(.timestamp>"2026-05-04")|.model_selected//"unset"' ~/.claude/PAI/MEMORY/OBSERVABILITY/prompt-processing.jsonl|sort|uniq -c`. Tier C: flag any response that felt shallow/off — cross-ref against session's prompt-processing.jsonl.
@@ -96,7 +96,7 @@ FOR: Multi-step, complex, or difficult work. Troubleshooting, debugging, buildin
 
 ### Context Routing
 
-Constitutional rules are in the system prompt (PAI/PAI_SYSTEM_PROMPT.md). This file defines operational procedures and format templates.
+This file is the top instruction layer — operational procedures, format templates, and context routing. There is no separate system-prompt layer.
 
 Startup context is `@`-imported above (PRINCIPAL_IDENTITY, DA_IDENTITY, PROJECTS, PRINCIPAL_TELOS) — always available. Use the routing table below to find file paths for any additional specialized context. Load on-demand only.
 
@@ -106,7 +106,6 @@ Startup context is `@`-imported above (PRINCIPAL_IDENTITY, DA_IDENTITY, PROJECTS
 |-------|------|
 | **Life OS thesis (what PAI is for)** | `~/.claude/PAI/DOCUMENTATION/LifeOs/LifeOsThesis.md` — canonical source of truth |
 | **Life OS schema (USER/ shape)** | `~/.claude/PAI/DOCUMENTATION/LifeOs/LifeOsSchema.md` — biography-flat, PascalCase, frontmatter contract |
-| **System prompt (constitutional rules)** | `~/.claude/PAI/PAI_SYSTEM_PROMPT.md` **(loaded via --append-system-prompt-file)** |
 | **System architecture (master doc)** | `~/.claude/PAI/DOCUMENTATION/PAISystemArchitecture.md` |
 | Architecture summary | `~/.claude/PAI/DOCUMENTATION/ARCHITECTURE_SUMMARY.md` **(loaded via @-import)** |
 | Algorithm system | `~/.claude/PAI/DOCUMENTATION/Algorithm/AlgorithmSystem.md` |

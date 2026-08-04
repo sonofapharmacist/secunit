@@ -25,8 +25,13 @@
  *
  * GRAPH EXPANSION (--graph):
  *   For each BM25 hit, walks 1-hop graph neighbors (typed-wikilink, related,
- *   wikilink, tag) via KnowledgeGraphLib and merges them into results with a
- *   small edge-weight boost on top of their own BM25 score.
+ *   wikilink) via KnowledgeGraphLib and merges them into results with a small
+ *   edge-weight boost on top of their own BM25 score. Tag co-occurrence is no
+ *   longer a traversable edge type (as of 2026-07-29 layer split); consumers
+ *   that want tag-driven candidate generation must call `tagNeighbors()` from
+ *   KnowledgeGraphLib directly and apply their own ranking. This retrieval
+ *   path does NOT opt into tag-neighbor candidates because doing so would
+ *   reintroduce the tag pollution that masked coverage gaps.
  *
  * COMPRESSION:
  *   Uses Inference.ts fast level for optional LLM compression of matched content.
@@ -343,9 +348,11 @@ function expandWithGraph(
   for (const hit of scored) {
     const anchorSlug = path.basename(hit.note.filePath, ".md");
 
-    // Gather neighbors: outgoing from anchor + inbound edges where to === anchorSlug
+    // Gather neighbors: outgoing from anchor + inbound via pre-indexed map.
+    // Pre-indexing was added in the 2026-07-29 layer split: O(E) per-anchor
+    // scans don't scale as the curated-edge stream grows beyond ~10K nodes.
     const outgoing = graph.adjacency.get(anchorSlug) || [];
-    const inbound = graph.edges.filter((e) => e.to === anchorSlug);
+    const inbound = graph.incomingEdges.get(anchorSlug) || [];
     const neighborhood = [...outgoing, ...inbound];
 
     // Best edge per neighbor (highest weight wins)

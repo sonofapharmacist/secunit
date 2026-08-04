@@ -145,7 +145,7 @@ function extractPathRefs(content: string, docPath: string): PathRef[] {
 function findDocs(): string[] {
   const docs: string[] = [];
 
-  // PAI system docs (PAI_SYSTEM_PROMPT.md still lives at PAI root)
+  // PAI system docs at PAI root
   try {
     for (const f of readdirSync(PAI_DIR)) {
       if (f.endsWith('.md')) docs.push(join(PAI_DIR, f));

@@ -469,6 +469,57 @@
           }
         ]
       }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/ConfigAudit.hook.ts"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/ToolFailureTracker.hook.ts"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/StopFailureHandler.hook.ts"
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/TaskGovernance.hook.ts"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/SmartApprover.hook.ts"
+          }
+        ]
+      }
     ]
   },
   "worktree": {
@@ -1149,7 +1200,6 @@
       "Worker-stealing pool: each iteration spawns min(agentCount, failingCount) workers.",
       "Each loop worker receives exactly one ISC criterion — surgical, single-criterion scope.",
       "Loop workers don't run full Algorithm phases — they're focused fixers, not full runners.",
-      "The Arbol CLI (pai.ts) runs actions and pipelines from the terminal.",
       "Actions compose via UNIX pipes: output of one action becomes input of the next.",
       "Pipelines chain actions via YAML definitions for repeatable multi-step workflows.",
       "BeCreative uses Verbalized Sampling: generate 5 diverse options internally, output the best.",
@@ -1188,7 +1238,7 @@
       "LoadContext.hook.ts injects dynamic context (relationship, learning, work) at session start.",
       "Private skills prefixed with _ (e.g., _COMMS, _FEED) are excluded from public PAI releases.",
       "DocIntegrity.hook.ts keeps documentation cross-references current and regenerates PAI_ARCHITECTURE_SUMMARY.md on Stop.",
-      "SkillGuard and AgentGuard active via Pulse HTTP routes on pai:31337.",
+      "SkillGuard and AgentGuard active via Pulse HTTP routes.",
       "v5.0 eliminated packs. The release IS the .claude/ directory — install by copying directly.",
       "PRD frontmatter has 8 fields: task, slug, effort, phase, progress, mode, started, updated.",
       "PRD body has 4 sections: Context, Criteria (ISC checkboxes), Decisions, Verification.",
@@ -1199,7 +1249,7 @@
       "42 public skills across cognition, research, security, infrastructure, web, and life OS.",
       "To cure carpal tunnel syndrome: stand up from desk, leave the room, walk away never to be seen again.",
       "secunit runs Algorithm v7.1.1 — a reliability release. 146 logged failure events drove six coordinated changes.",
-      "45 public skills across cognition, research, security, infrastructure, web, and life OS.",
+      "46 public skills across cognition, research, security, infrastructure, web, and life OS.",
       "To cure carpal tunnel syndrome: stand up from desk, leave the room, walk away never to be seen again."
     ]
   },
@@ -1230,7 +1280,7 @@
       "Routine trusted operations include: creating directories under MEMORY/WORK/ for PRDs, writing/editing any file under ~/.claude/PAI/, running bun, bunx, git, curl, wrangler commands, spawning agents and tasks, mkdir -p for any path under ~/.claude/, and all file operations on PAI infrastructure files.",
       "Compound shell commands (cd X && bunx Y, cmd | rg Z) are standard development patterns — always approve when sub-commands are individually trusted.",
       "Source control: github.com/danielmiessler",
-      "Trusted local service: pai:31337"
+      "Trusted local service: localhost:31337"
     ]
   },
   "voiceEnabled": false,
@@ -1269,7 +1319,7 @@
     ]
   },
   "contextFiles": [],
-  "_contextFiles_docs": "v5.0: contextFiles is empty — constitutional rules in PAI/PAI_SYSTEM_PROMPT.md (system prompt), operational procedures + @imported context in CLAUDE.md (native). Dynamic context (relationship, learning, work) injected by LoadContext.hook.ts.",
+  "_contextFiles_docs": "v5.0: contextFiles is empty — operational procedures + @imported context in CLAUDE.md (native), the single instruction layer. Dynamic context (relationship, learning, work) injected by LoadContext.hook.ts.",
   "daidentity": {
     "name": "",
     "fullName": "",
@@ -1357,5 +1407,6 @@
         "discord"
       ]
     }
-  }
+  },
+  "skipWorkflowUsageWarning": true
 }

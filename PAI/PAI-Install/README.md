@@ -37,9 +37,9 @@ The installer runs 8 steps in dependency order:
 | 3 | **API Keys** | Auto-completes — key collection happens during the Voice step |
 | 4 | **Identity** | Prompts for your name, AI assistant name, timezone, and a personal catchphrase |
 | 5 | **PAI Repository** | Clones the PAI repo to `~/.claude/` (or updates if already present) |
-| 6 | **Configuration** | Generates `settings.json`, `.env`, directory structure, `pai` shell alias, and patches version files |
+| 6 | **Configuration** | Generates `settings.json`, `.env`, directory structure, and patches version files |
 | 7 | **DA Voice + Pulse** | Collects ElevenLabs API key, selects voice type (Female/Male/Custom), prompts to install Pulse (voice + Life Dashboard + observability on port 31337) and the Pulse menu bar app via launchd |
-| 8 | **Validation** | Verifies directory structure, settings file, API keys, Pulse health on 31337, launchd plist, shell alias — reports pass/fail for each |
+| 8 | **Validation** | Verifies directory structure, settings file, API keys, Pulse health on 31337, and launchd plist — reports pass/fail for each |
 
 ### Voice + Pulse Setup
 
@@ -217,7 +217,6 @@ This ensures fresh installs get the full PAI configuration without the installer
 | `settings.json` | `~/.claude/settings.json` | Merged config (template + user fields) |
 | `.env` | `~/.claude/PAI/.env` | `ELEVENLABS_API_KEY=...` |
 | `LATEST` | `~/.claude/PAI/Algorithm/LATEST` | Algorithm version (patched to current) |
-| Shell alias | `~/.zshrc` | `alias pai='cd ~/.claude && claude'` |
 
 ### Directory Structure Created
 
@@ -265,10 +264,10 @@ The Algorithm version displayed in the banner reads from `PAI/Algorithm/LATEST`.
 After the installer completes, open a terminal and run:
 
 ```bash
-source ~/.zshrc && pai
+cd ~/.claude && claude
 ```
 
-This reloads your shell config (activates the `pai` alias) and launches PAI for the first time.
+This starts Claude Code from the PAI installation directory.
 
 ### First-run: populate your personal context
 
@@ -297,7 +296,7 @@ Each section is skippable. If you have existing data (Obsidian, Notion, journals
 | Port 1337 in use | Set `PAI_INSTALL_PORT=8080` before running install.sh |
 | ElevenLabs key invalid | Verify at elevenlabs.io — ensure no trailing spaces, key starts with `xi-` or `sk_` |
 | Permission denied | Run `chmod -R 755 ~/.claude` |
-| `pai` command not found | Run `source ~/.zshrc` to reload shell config |
+| Claude Code opens outside PAI | Run `cd ~/.claude && claude` so project instructions load from the installation directory |
 | Pulse / voice notifications not working | Check port 31337 is free: `lsof -ti:31337`. Restart Pulse: `bash ~/.claude/PAI/PULSE/manage.sh restart`. Check status: `bash ~/.claude/PAI/PULSE/manage.sh status`. |
 | Pulse menu bar icon missing | Install or reinstall: `bash ~/.claude/PAI/PULSE/MenuBar/install.sh`. Verify launchd plist: `ls ~/Library/LaunchAgents/com.pai.pulse-menubar.plist`. |
 | Banner shows wrong algorithm version | Check `~/.claude/PAI/Algorithm/LATEST` contains correct version |

@@ -42,6 +42,9 @@ const CONTEXT_LOG = join(OBSERVABILITY_DIR, 'context-sessions.jsonl');
  * - Sonnet 4.6+ = 1M standard (no beta header)
  * - Opus 4.6+ = 1M standard (same simplification)
  * - Haiku 4.5 = 200K (older sizing; smaller class retained tighter window)
+ * - MiniMax M3 = 512K (PAI shell sets CLAUDE_CODE_AUTO_COMPACT_WINDOW=512000;
+ *   native 1M but M3 degrades past ~200K so we cap runtime well before the
+ *   quality cliff — see PAI/MEMORY/KNOWLEDGE/Research/m3-220k-empirical-ceiling-2026-06-18.md)
  *
  * Detection: walk ANTHROPIC_DEFAULT_*_MODEL env vars for a known slug.
  * The active model in Claude Code shell is one of these.
@@ -59,6 +62,7 @@ function resolveContextWindowSize(): number {
 
   for (const slug of candidates) {
     const lower = slug.toLowerCase();
+    if (lower.includes('m3') || lower.includes('minimax')) return 512_000;
     if (lower.includes('haiku')) return 200_000;
     if (lower.includes('sonnet') || lower.includes('opus')) return 1_000_000;
   }

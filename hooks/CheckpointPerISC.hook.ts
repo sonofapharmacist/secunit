@@ -25,9 +25,8 @@ import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parseFrontmatter, parseCriteriaList, ARTIFACT_FILENAME, LEGACY_ARTIFACT_FILENAME } from './lib/isa-utils';
 
-// Allowlist path: top of ~/.claude per spec. We only READ this file (never
-// write to it), so ContainmentGuard's write restriction on bare ~/.claude
-// doesn't apply. One absolute repo path per line; '#' comments and blank
+// Allowlist path: top of ~/.claude per spec. This file is read-only here
+// (never written). One absolute repo path per line; '#' comments and blank
 // lines are ignored. Tilde and $HOME prefixes are expanded as a quality-of-
 // life feature so users can write `~/Projects/foo` instead of the long form.
 const ALLOWLIST_PATH = join(homedir(), '.claude', 'checkpoint-repos.txt');

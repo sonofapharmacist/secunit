@@ -179,6 +179,71 @@ Optional: revoke macOS permissions in System Settings → Privacy & Security
 (Accessibility, Input Monitoring, Screen Recording, Microphone, etc.) by
 removing the `interceptor-bridge` entry from each list.
 
+### 6f. Dedicated Profile — cross-origin isolation (do this before routine untrusted browsing)
+
+See the Cross-Origin Security Model section of `SKILL.md` for why this matters:
+Interceptor's extension has `<all_urls>` host permissions and no per-tab
+isolation, so anything it does runs against whichever profile/session is
+active. Running it against your primary, personally-logged-in Chrome profile
+means a prompt injection on an untrusted page could reach adjacent
+authenticated tabs (email, banking, admin panels). A dedicated profile with no
+personal accounts signed in closes that exposure for anything other than the
+routine, trusted work Interceptor is actually for (deploy verification on your
+own sites, reproducing bugs, client sites under an active engagement).
+
+**Native messaging is registered browser-wide, not per-profile** — `install.sh`
+writes one manifest per browser install (`NativeMessagingHosts/com.interceptor.host.json`),
+and Chrome resolves it identically no matter which profile is active. There is
+nothing to "retarget" there. Profile isolation instead comes from **which
+profile the extension gets loaded into and which profile Chrome launches
+with** — controlled by `install.sh --profile <name>` (macOS) or the manual
+steps below (Linux/Windows, since `install.sh`'s extension-loading path is
+macOS-only as of this writing — it shells out to `open -a` and `osascript`
+and only searches `/Applications/*.app`).
+
+**Create the dedicated profile (any platform):**
+
+```bash
+# macOS
+open -a "Google Chrome" --args --profile-directory="Interceptor" --no-first-run
+
+# Linux
+google-chrome --profile-directory="Interceptor" --no-first-run &
+
+# Windows (PowerShell)
+Start-Process "chrome.exe" -ArgumentList '--profile-directory="Interceptor"','--no-first-run'
+```
+
+This launches Chrome with a new profile directory named `Interceptor` under
+the browser's profile root (`~/Library/Application Support/Google/Chrome/Interceptor`
+on macOS, `~/.config/google-chrome/Interceptor` on Linux). **Do not sign into
+any personal account in this window.** Set it up once, then:
+
+1. Open `chrome://extensions`, enable Developer Mode.
+2. **Load unpacked** → `~/Projects/interceptor/extension/dist`.
+3. Quit Chrome fully and relaunch with the same `--profile-directory=` flag
+   every time Interceptor needs to drive the browser.
+
+macOS users running `install.sh --chrome --profile "Interceptor"` get steps
+1–3 automated (see the Developer-mode preflight in `load_extension()`); the
+manual steps above are the only path on Linux until the installer gets Linux
+support (tracked — see Gotchas).
+
+**Verify isolation:**
+
+```bash
+interceptor status                                  # confirms extension reachable
+# In the SAME window: chrome://settings/people       # confirm "No account" / no sync
+```
+
+**When it's safe to skip this:** routine work on known, trusted properties
+(your own sites, an ES client site under an active engagement, local dev
+servers). The risk this addresses is specifically *untrusted third-party
+content* (unfamiliar sites, pentest/recon targets, random research links)
+sharing a browser context with authenticated sessions — reserve the dedicated
+profile for that category of work, or just always use it if the switching
+cost is low enough.
+
 ### 7. Extension Reload (manual — Chrome won't auto-refresh unpacked extensions)
 
 If `extension/dist/manifest.json` changed (especially `version` or `key`):
@@ -215,3 +280,18 @@ if you skipped step 6 — that's fine). `open` should return tree + extracted te
 - Watch `extension/src/content/data/extract.ts` — the body/HTML extract limits
   default to 10K/10K/50K. We patch them to 10M to support large-page reads;
   re-apply after each upstream pull.
+- **`install.sh` has no Linux support** (audited 2026-07-29, `PAI/MEMORY/WORK/20260728-interceptor-security-hardening/ISA.md`).
+  Every extension-loading code path (`load_extension()`) uses `open -a`,
+  `osascript`, and `/Applications/*.app` detection — none of which exist on
+  Linux. Step 5 (native messaging re-registration) works fine cross-platform
+  since it's pure `sed`/`mkdir`/symlink, but step 6f's automation
+  (`--profile` flag driving Developer-mode preflight + launch) is macOS-only;
+  Linux/Windows operators must follow the manual profile-creation steps in 6f.
+  A prior session's Linux install (this host) predates any of this tooling —
+  its native-messaging symlink under `~/.config/google-chrome/NativeMessagingHosts/`
+  was created by hand, not by running `install.sh` (which would no-op the
+  browser-detection step on Linux). Porting `load_extension()` to Linux (XDG
+  profile paths, `google-chrome --profile-directory=` directly instead of
+  `open -a --args`, no `osascript` equivalent needed since Linux Chrome
+  accepts the same flags without a relaunch dance) is a follow-up, not done
+  in this pass.

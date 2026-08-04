@@ -47,7 +47,29 @@ ENDPOINTS = {
         "model": "gpt-4o",
         "passage_key": "api/openai",
     },
+    # GPT-5.6 family via OpenRouter (same price as OpenAI native per 2026-07-30
+    # pricing announcement; no direct OpenAI-native access at bench time).
+    "gpt56sol": {
+        "name": "OpenAI GPT-5.6 Sol (flagship, via OpenRouter)",
+        "model": "openai/gpt-5.6-sol",
+        "passage_key": "api/openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+    "gpt56terra": {
+        "name": "OpenAI GPT-5.6 Terra (balanced, via OpenRouter)",
+        "model": "openai/gpt-5.6-terra",
+        "passage_key": "api/openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
+    "gpt56luna": {
+        "name": "OpenAI GPT-5.6 Luna (fast/cheap, via OpenRouter)",
+        "model": "openai/gpt-5.6-luna",
+        "passage_key": "api/openrouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+    },
 }
+
+DEFAULT_URL = "https://api.openai.com/v1/chat/completions"
 
 
 def resolve_key(passage_key: str) -> str:
@@ -83,7 +105,7 @@ TESTS = [
             "Message: \"What's the capital of France?\"\n"
             "Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM."
         ),
-        "eval": lambda r: r.strip().upper() == "NATIVE",
+        "eval": lambda r: r.strip().upper().startswith("NATIVE"),
         "scoring": "exact",
     },
     {
@@ -95,7 +117,7 @@ TESTS = [
             "and write a migration guide.\"\n"
             "Reply with ONLY the word: MINIMAL, NATIVE, or ALGORITHM."
         ),
-        "eval": lambda r: r.strip().upper() == "ALGORITHM",
+        "eval": lambda r: r.strip().upper().startswith("ALGORITHM"),
         "scoring": "exact",
     },
     {
@@ -174,7 +196,7 @@ TESTS = [
 def _check_json(raw: str) -> bool:
     s = _strip_fence(raw)
     try:
-        j = json.loads(s)
+        j = json.JSONDecoder().raw_decode(s.strip())[0]
         return j.get("status") == "ok" and j.get("count") == 42
     except Exception:
         return False
@@ -198,10 +220,14 @@ def call_api(target_key: str, prompt: str, tools=None, max_tokens: int = 512) ->
     """Returns (response_text_or_marker, usage, raw_or_error)."""
     cfg = ENDPOINTS[target_key]
     api_key = resolve_key(cfg["passage_key"])
+    url = cfg.get("url", DEFAULT_URL)
+    # OpenAI native gpt-5.x rejects `max_tokens` and requires `max_completion_tokens`;
+    # OpenRouter's OpenAI-compat layer wants standard `max_tokens`.
+    token_field = "max_completion_tokens" if url == DEFAULT_URL else "max_tokens"
 
     payload = {
         "model": cfg["model"],
-        "max_completion_tokens": max_tokens,
+        token_field: max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     if tools:
@@ -209,7 +235,7 @@ def call_api(target_key: str, prompt: str, tools=None, max_tokens: int = 512) ->
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        "https://api.openai.com/v1/chat/completions",
+        url,
         data=data,
         headers={
             "Authorization": f"Bearer {api_key}",

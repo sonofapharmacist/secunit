@@ -4,7 +4,7 @@
  *
  * PURPOSE:
  * Record fixed context costs at session startup:
- * - system_prompt_tokens: size of PAI_SYSTEM_PROMPT.md
+ * - system_prompt_tokens: size of CLAUDE.md (single top instruction layer)
  * - memory_baseline: size of @-imported files (PRINCIPAL_IDENTITY, PROJECTS, etc)
  * - skills_count: number of skills loaded
  *
@@ -16,7 +16,7 @@
  *
  * DESIGN:
  * Compute token counts by reading actual files. System prompt tokens estimated
- * from PAI_SYSTEM_PROMPT.md file size. Memory tokens estimated from @-imported files.
+ * from CLAUDE.md file size. Memory tokens estimated from @-imported files.
  */
 
 import { appendFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from "fs";
@@ -27,7 +27,9 @@ const PAI_DIR = process.env.PAI_DIR || join(HOME, ".claude", "PAI");
 const PAI_CONFIG = join(PAI_DIR, "USER", "Config", "PAI_CONFIG.yaml");
 const OBSERVABILITY_DIR = join(HOME, ".claude", "PAI", "MEMORY", "OBSERVABILITY");
 const CONTEXT_LOG = join(OBSERVABILITY_DIR, "context-sessions.jsonl");
-const SYSTEM_PROMPT = join(PAI_DIR, "PAI_SYSTEM_PROMPT.md");
+// CLAUDE.md is the single top instruction layer (PAI_SYSTEM_PROMPT.md retired
+// 2026-07-24 — see DOCUMENTATION/Decisions/system-prompt-retirement.md).
+const SYSTEM_PROMPT = join(HOME, ".claude", "CLAUDE.md");
 const USER_DIR = join(PAI_DIR, "USER");
 const SKILLS_DIR = join(HOME, ".claude", "skills");
 

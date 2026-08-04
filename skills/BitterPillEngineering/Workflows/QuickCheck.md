@@ -15,12 +15,13 @@ User provides either:
 
 If a file path, read it. If inline, use the provided text.
 
-### 2. Apply the Five Questions
+### 2. Apply the Six Questions
 
-For each rule/instruction found, evaluate against the five questions from SKILL.md. Focus on:
-- Is this restating Claude's default behavior?
+For each rule/instruction found, evaluate against the six questions from SKILL.md. Focus on:
+- Is this restating the model's default behavior?
 - Is this vague enough that it'll be interpreted differently each time?
 - Does this look like it was added to fix one specific bad output?
+- Is this an enumerated constraint where judgment framing would generalize better?
 
 ### 3. Report
 

@@ -1,6 +1,6 @@
 ---
 name: Knowledge
-description: "Manage the PAI Knowledge Archive — a curated, typed graph of notes across four entity domains: People, Companies, Ideas, and Research. Operations: search (3-pass: lexical + frontmatter + wikilink), add (creates note with mandatory typed cross-links), harvest (KnowledgeHarvester pulls from PAI sources), develop (surfaces seedling notes for enrichment), ingest (fetch URL or file, create primary note, ripple updates to related notes), contradictions (find conflicting claims via tag-overlap pairs), graph (stats or 2-hop traversal via KnowledgeGraph.ts), retrieve (BM25-lite compressed context via MemoryRetriever.ts), mine (SessionHarvester extracts memory candidates from recent conversations). Every note ships with typed related: frontmatter links (8 relationship types: supports, contradicts, extends, part-of, instance-of, caused-by, preceded-by, related). USE WHEN knowledge, knowledge base, search knowledge, what do we know about, archive, harvest, knowledge status, develop note, add to knowledge, ingest, contradictions, knowledge graph, graph, retrieve, mine conversations. NOT FOR session/ISA context recovery (use ContextSearch)."
+description: "Manage the PAI Knowledge Archive — a curated, typed graph of notes across four entity domains: People, Companies, Ideas, and Research. Operations: search (3-pass: lexical + frontmatter + wikilink), add (creates note with typed cross-links), harvest (KnowledgeHarvester pulls from PAI sources), develop (surfaces seedling notes for enrichment), ingest (fetch URL or file, create primary note, ripple updates to related notes), contradictions (find conflicting claims via tag-overlap pairs), graph (stats or 2-hop traversal via KnowledgeGraph.ts), retrieve (BM25-lite compressed context via MemoryRetriever.ts), mine (SessionHarvester extracts memory candidates from recent conversations). Notes carry typed related: frontmatter links (8 relationship types: supports, contradicts, extends, part-of, instance-of, caused-by, preceded-by, related). USE WHEN knowledge, knowledge base, search knowledge, what do we know about, archive, harvest, knowledge status, develop note, add to knowledge, ingest, contradictions, knowledge graph, graph, retrieve, mine conversations. NOT FOR session/ISA context recovery (use ContextSearch)."
 argument-hint: [search|add|harvest|develop|ingest|contradictions|graph|retrieve|mine|<query>]
 effort: low
 context: fork
@@ -9,8 +9,6 @@ context: fork
 # Knowledge Skill
 
 Manage the PAI Knowledge Archive at `~/.claude/PAI/MEMORY/KNOWLEDGE/`.
-
-**Archive schema:** `~/.claude/PAI/MEMORY/KNOWLEDGE/_schema.md`
 
 ## Command Routing
 
@@ -22,7 +20,7 @@ Manage the PAI Knowledge Archive at `~/.claude/PAI/MEMORY/KNOWLEDGE/`.
 | `/knowledge add <type>` | **add** | Create a new note (People, Companies, or Ideas) |
 | `/knowledge harvest` | **harvest** | Run KnowledgeHarvester on all sources |
 | `/knowledge develop` | **develop** | Surface seedlings and enrich them |
-| `/knowledge ingest <url-or-file> [--light]` | **ingest** | Read source, create note, ripple updates to related notes. `--light`: cap ripple at 3, skip index rebuild |
+| `/knowledge ingest <url-or-file> [--light]` | **ingest** | Read source, create note, ripple updates to related notes. `--light`: cap ripple at 3 (index rebuild always runs) |
 | `/knowledge contradictions` | **contradictions** | Find and review conflicting claims across notes |
 | `/knowledge graph` | **graph** | Knowledge graph stats and navigation |
 | `/knowledge graph <slug>` | **graph** | Traverse graph from a note |
@@ -88,8 +86,8 @@ Create a new note manually in the specified entity type.
 1. Validate type is one of: People, Companies, Ideas, Research
 2. Ask for a title (or use remaining args after type)
 3. Generate kebab-case filename from title
-4. **MANDATORY: Find 2-3 related notes first.** Before writing the new note, grep existing Knowledge for related entities by topic/tags/name. This becomes the `related:` frontmatter array. No Knowledge note ships without typed links. See Canonical Linking Requirement below.
-5. Create the note with proper frontmatter from `_schema.md` — schemas require: `title`, `type`, `tags` (min 1), `created`, `updated`, `quality` (0-10), plus type-specific body sections.
+4. **Search for real relations first.** Before writing the new note, grep existing Knowledge for related entities by topic/tags/name. What you find becomes the `related:` frontmatter array — 0-4 entries, however many you can actually defend. See Canonical Linking Requirement below.
+5. Create the note with proper frontmatter — required fields: `title`, `type`, `tags` (min 1), `created`, `updated`, `quality` (0-10), plus type-specific body sections. The `related:` array is always present and may be empty: `related: []`.
 6. Write the file to `KNOWLEDGE/<Type>/<kebab-case-title>.md` — slug max 60 chars
 7. Verify every slug in `related:` exists in the archive before saving
 8. Regenerate the type's MOC:
@@ -99,14 +97,22 @@ bun ~/.claude/PAI/TOOLS/KnowledgeHarvester.ts index
 
 **Topic is a tag, not a type.** A security insight is an Idea with a `security` tag. A security company is a Company with a `security` tag. The entity type determines the schema; the tag determines the topic.
 
-## Canonical Linking Requirement (MANDATORY)
+## Canonical Linking Requirement
 
-**Every new Knowledge note must ship with typed cross-links.** This is not optional. The architecture is defined in `MEMORY/KNOWLEDGE/Ideas/pai-knowledge-linking-architecture.md` (quality 9) and the schema in `_schema.md`.
+**Every new Knowledge note ships with typed cross-links — what it can defend, no more.** A note with zero defensible relations ships zero, not a padded `related:`.
 
-**Every write must include:**
+**Every write produces:**
 
-1. **`related:` frontmatter array** — 2-4 typed entries linking to other Knowledge entries (any domain: People, Companies, Ideas, Research)
-2. **Body wikilinks** — 1-3 `[[slug]]` references woven into the prose where natural (Implications, Evidence, or Context sections)
+1. **`related:` frontmatter array** — 0-4 typed entries linking to other Knowledge entries (any domain: People, Companies, Ideas, Research); the array is always present, its contents can be empty when nothing is defensible
+2. **Body wikilinks** — 0-3 `[[slug]]` references woven into the prose where natural (Implications, Evidence, or Context sections)
+
+**0-4 is a ceiling, not a target.** Add every relation you can defend and none that you can't. If a note genuinely connects to nothing in the archive yet, ship it with `related:` empty — an honest orphan is repairable later, a padded edge is not. A false edge is indistinguishable from a real one at retrieval time, carries identical weight in traversal, and outlives the session that invented it.
+
+**The test for each edge:** state the mechanism in one sentence — "A raises the threshold B assumed," "A is the implementation B describes," "A's benchmark contradicts B's claim." If the best you can manage is "both are about security," that's a tag, not a relation.
+
+**Bare `related` is a smell.** The eight types exist to force that precision. If nothing but generic `related` fits, the relation usually isn't there. Genuine exceptions: sibling artifacts from one source, and companion notes that share provenance without a directional claim.
+
+**Candidate count is never a link target.** The ripple pass evaluates up to 10 candidates (3 under `--light`). That number measures search effort, not expected output — evaluating ten and linking one is a correct result, not an incomplete one.
 
 **8 relationship types** (pick the most accurate, prefer specific over generic):
 
@@ -144,7 +150,7 @@ rg -l "Person Name" ~/.claude/PAI/MEMORY/KNOWLEDGE/
 
 **Enforcement:**
 - Writes that skip `related:` are incomplete and must be fixed before the skill/workflow returns success
-- The `ingest` workflow runs this as part of the ripple pass
+- The `ingest` workflow splits this across two steps: frontmatter links on the primary note (Step 2), reverse-direction links on the related notes (Step 4). Both are required — Step 2 alone leaves the edge dangling
 - The Algorithm LEARN phase includes this in its knowledge capture step
 - All agents writing Knowledge entries must follow this rule — it is part of the schema, not an optional enhancement
 
@@ -197,9 +203,18 @@ Ingest a source into the Knowledge Archive. This is the key Karpathy-inspired up
 
 **If no argument provided:** Show usage: `/knowledge ingest <url-or-file-path>`
 
-**`--light` flag:** Quick-save mode for articles and short reads. Caps ripple candidates at 3 (vs 10) and skips the final index rebuild. Use for routine article saves. Omit for research-grade sources where full graph integration matters.
+**`--light` flag:** Quick-save mode for articles and short reads. Caps ripple candidates at 3 (vs 10), and does nothing else. Use for routine article saves; omit for research-grade sources where full graph integration matters.
 
-**Auto-light detection:** After fetching the source, count words in the content. If under 800 words, automatically apply `--light` behavior regardless of whether the flag was passed. Log `(auto-light: <N> words)` in the ripple plan header so it's visible.
+**Auto-light detection (affects the ripple cap only):** After fetching the source, *measure* its length — do not estimate it. Write the fetched content to a temp file and run `wc -w`, or count programmatically. If the measured count is under 800, apply the `--light` ripple cap. Log the literal integer in the ripple plan header: `(auto-light: 412 words)`.
+
+Two rules on that measurement:
+
+- **No measurement, no cap.** If you did not actually count, treat the source as over-threshold and run the full 10-candidate ripple. The cap is an optimization; skipping it costs a little time, and wrongly applying it silently degrades the graph.
+- **The justification must be an integer.** "roughly under," "in spirit," "effectively short," "about 800" are not measurements — a hedge in this slot is the tell that the count was never taken. Treat your own hedging as a signal to go measure.
+
+**Multi-source ingests sum across every source.** Two documents of 600 words each are a 1200-word ingest, not a light one. Count the total you actually read, not the smallest piece of it.
+
+The 800 threshold is a tunable, not a law. If you change it, grep the file for `800` and update every hit — it is stated here and restated in the Gotchas entry.
 
 ### Step 1 — Fetch the source
 
@@ -211,13 +226,13 @@ Summarize the source in 2-3 sentences. Identify key entities, claims, and insigh
 
 ### Step 2 — Classify and create primary note
 
-Determine entity type (People, Companies, Ideas, or Research) using the classification rules in `_schema.md`. Most ingested sources become Ideas.
+Determine entity type (People, Companies, Ideas, or Research). Most ingested sources become Ideas.
 
 Create the primary note using the schema for that type:
 - Generate kebab-case slug from title (max 60 chars)
 - Write to `KNOWLEDGE/<Type>/<slug>.md` with proper frontmatter
 - Include `source_url:` or `source_path:` in frontmatter
-- **MANDATORY: Include `related:` array with 2-4 typed links** — the ripple pass (Step 3) identifies these, and they must be baked into the frontmatter of the primary note at creation time, not added after
+- **Include `related:` array with 0-4 typed links** — the ripple pass (Step 3) surfaces candidates; link the ones you can defend, per the Canonical Linking Requirement. Whatever you do link must be baked into the primary note's frontmatter at creation time, not added after
 
 ### Step 3 — Ripple pass (the key innovation)
 
@@ -240,7 +255,7 @@ For each related note found (up to **10**, or **3** if `--light`):
 ```
 📥 INGEST RIPPLE PLAN:
   PRIMARY: Ideas/new-note-slug — "Title" (created)
-  PRIMARY related: frontmatter links (MANDATORY):
+  PRIMARY related: frontmatter links (0–4, defensible only — examples below; ship empty when none):
     → Ideas/existing-note-1 — type: extends
     → Ideas/existing-note-2 — type: supports
     → People/person-slug — type: related
@@ -254,7 +269,7 @@ For each related note found (up to **10**, or **3** if `--light`):
 ### Step 4 — Execute ripple updates
 
 After the user approves (or you determine updates are low-risk cross-references):
-- **Primary note**: ensure `related:` frontmatter array has 2-4 typed entries — this is mandatory, not optional
+- **Primary note**: `related:` frontmatter array holds 0-4 typed entries — every one defensible, none padded to reach a count
 - **Related notes**: add reverse-direction `related:` entries to their frontmatter with appropriate types
 - **Body wikilinks**: add `[[wikilinks]]` in existing prose where natural (not forced)
 - Update `updated:` date on modified notes
@@ -270,10 +285,12 @@ Append to `KNOWLEDGE/_log.md`:
 - Ripple: N notes updated, N contradictions flagged
 ```
 
-Regenerate MOCs (**skip if `--light`**):
+Regenerate MOCs — **always, including under `--light`**:
 ```bash
 bun ~/.claude/PAI/TOOLS/KnowledgeHarvester.ts index
 ```
+
+This takes about a second and regenerates all five MOCs. Skipping it leaves the new note absent from both its domain MOC and the master index — invisible to every later lookup, with nothing downstream raising an error about it. See Gotchas for why this step is unconditional.
 
 Present in NATIVE mode.
 
@@ -404,7 +421,7 @@ Present in NATIVE mode.
 - **4 entity types now.** People (human beings), Companies (organizations), Ideas (insights/theses/analyses), Research (multi-source investigations with methodology). If it doesn't fit one of these, it's not knowledge — it belongs in WORK/ or LEARNING/.
 - **Topic = tag, not domain.** A security insight is an Idea with a `security` tag. Never create topic-based folders.
 - **The lookup test.** "Would the user look this up by name?" — if not, it's not knowledge.
-- **Schema enforcement.** Each entity type has required fields defined in `_schema.md`. Always read the schema before writing.
+- **Schema enforcement.** Required frontmatter fields: `title`, `type`, `tags` (min 1), `created`, `updated`, `quality` (0-10). `related:` is always present (may be empty).
 - **Algorithm LEARN phase writes directly.** The LEARN phase has the best context — it writes to KNOWLEDGE/ with proper schemas. Harvester reflections are disabled.
 - **Never delete notes without asking.** Pruning is automatic (90-day seedling expiry via harvester). Manual deletion requires the user's approval.
 - **Quality score reflects insight value, not source length.** A 50-word blog aside that shifts a frame is quality 9. A 10,000-word paper that restates known facts is quality 4. Never anchor quality to how much you read — anchor it to how much the world looks different after reading it.
@@ -412,3 +429,5 @@ Present in NATIVE mode.
 - **All harvested notes start as seedlings.** Only `/knowledge develop` promotes them.
 - **Temporal validity is optional.** Notes can have `valid_from`/`valid_until` frontmatter fields to track when facts were true. The contradiction detector uses these to skip non-overlapping time windows.
 - **Reddit requires `agy -p`.** WebFetch and Playwright MCP are blocked by Reddit's network security. Always route `reddit.com` URLs through `agy -p <url>` in Bash.
+- **An empty `related:` beats a padded one.** The array used to be a mandatory 2-4, and it showed: among linked Research/Ideas notes the mode sat exactly on 4, the ceiling, with a clean decay above it — the shape of a form being filled, not relations being found. Meanwhile 79.5% of archive nodes have zero semantic edges. Padding never fixed coverage; it just made the orphan problem harder to see. Link what you can defend, ship zero when zero is true. Step 5's `KnowledgeHarvester.ts index` runs on every ingest, `--light` included. It used to be gated by `--light`, and the failure mode was not the flag but the 800-word threshold feeding it: a multi-source ingest well over the line got classified as short on a qualitative estimate ("under 800 words in spirit") rather than a measured count, and the rebuild went with it. Learn the tell — a hedged threshold claim means the count was never taken. The gate was removed rather than tightened, because a step that costs a second should never depend on model judgment at all.
+- **Frontmatter `related:` is a claim; the reverse link is what makes it real.** Writing `- slug: foo / type: extends` into a new note does nothing to `foo` — Step 4's reverse-direction pass is what creates the edge. Verify after every ingest with `bun ~/.claude/PAI/TOOLS/KnowledgeGraph.ts related <new-slug>`; a relation living in only one file's frontmatter is a dangling assertion.

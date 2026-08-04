@@ -49,7 +49,26 @@ const WORK_CLIENT_SKILLS = new Set(['asa', 'tabletop-exercise', 'aurascape'])
 const PRIVATE_SKILL_DIRS = new Set([
   'Recon', 'TabletopExercise', '_ARCHIVE',
   'app-security-assessment', 'app_best_practice', 'esi-branded-docx',
-  '_ES_SOLUTIONS_PLACEMENT',
+  '_ES_SOLUTIONS_PLACEMENT', '_ES_VENDOR_INTEL',
+])
+
+// Fail-safe allow-list of directory names known to be intentionally public.
+// PRIVATE_SKILL_DIRS is deny-by-name (staged if not listed); this is the
+// complementary allow-by-name check that runs POST-stage, against what
+// actually shipped — not what the copy step intended to exclude. A skill
+// that ships without appearing here is either a brand-new legitimate public
+// skill (add it) or a forgotten-naming mistake (the gap PRIVATE_SKILL_DIRS
+// alone cannot catch — see runPrivateZoneGate()).
+const PUBLIC_SKILL_DIR_ALLOWLIST = new Set([
+  'Agents', 'ApertureOscillation', 'Aphorisms', 'Apify', 'ArXiv', 'Art',
+  'BeCreative', 'BitterPillEngineering', 'BrightData', 'Browser',
+  'ContextSearch', 'Council', 'CreateCLI', 'CreateSkill', 'Daemon',
+  'Delegation', 'DualCheck', 'Evals', 'ExtractWisdom', 'Fabric', 'FirstPrinciples', 'ISA',
+  'Ideate', 'Interceptor', 'Interview', 'IterativeDepth', 'Knowledge', 'Loop',
+  'Migrate', 'Optimize', 'PAIUpgrade', 'PrivateInvestigator', 'Prompting',
+  'RedTeam', 'Research', 'RootCauseAnalysis', 'Sales', 'Science',
+  'SessionFork', 'SystemsThinking', 'Telos', 'TmuxCliDriver', 'Verify',
+  'Webdesign', 'WorldThreatModel', 'WriteStory',
 ])
 
 // Algorithm version — read from ALGORITHM/LATEST (authoritative; settings.json can drift)
@@ -174,7 +193,12 @@ function stage() {
   ensureDir(SKILLS_DEST)
   stagedSkillCount = 0
   for (const entry of readdirSync(SKILLS_SRC)) {
-    if (PRIVATE_SKILL_DIRS.has(entry)) continue
+    // Two-layer exclusion: the explicit allowlist covers TitleCase skills that are
+    // private despite their name (Recon, app-security-assessment, …); the `_` prefix
+    // check enforces the documented `skills/_*` convention so a newly-created private
+    // skill is excluded by default rather than shipping until someone remembers to
+    // add it here. _ES_VENDOR_INTEL shipped through this gap once.
+    if (PRIVATE_SKILL_DIRS.has(entry) || entry.startsWith('_')) continue
     const src = join(SKILLS_SRC, entry)
     if (!statSync(src).isDirectory()) continue
     cpSync(src, join(SKILLS_DEST, entry), { recursive: true })
@@ -500,7 +524,12 @@ description: |
       return yamlStringify(doc)
     }
   } catch {
-    // fallback: line-based filter
+    // fallback: line-based filter, for when srcPath itself doesn't parse as YAML.
+    // A line-based filter operating on already-broken YAML has no guarantee its
+    // output still parses (e.g. a stray unbalanced quote anywhere outside the
+    // tabletop-exercise/asa/aurascape blocks survives the filter untouched).
+    // Re-parse before returning it — ship the safe empty-skills doc instead of
+    // an unvalidated guess if the fallback's own output doesn't parse either.
     if (existsSync(srcPath)) {
       const lines = readFileSync(srcPath, 'utf-8').split('\n')
       const out: string[] = []
@@ -510,7 +539,14 @@ description: |
         else if (skip && /^\s+-\s+name:/.test(line)) { skip = false }
         if (!skip) out.push(line)
       }
-      return out.join('\n')
+      const fallbackOutput = out.join('\n')
+      try {
+        parseYaml(fallbackOutput)
+        return fallbackOutput
+      } catch (reparseErr) {
+        log(`  ⚠ buildSkillRouting fallback output failed YAML re-validation: ${(reparseErr as Error).message.split('\n')[0]}`)
+        log(`    Shipping empty-skills doc instead of unvalidated fallback output.`)
+      }
     }
   }
   return header + 'skills: []\n'
@@ -865,6 +901,299 @@ function runIdentifierGate(): { pass: boolean; hits: Hit[] } {
     log(`    ${h.text}`)
   }
   return { pass: false, hits }
+}
+
+// ── Private-zone gate (ISC-6) ─────────────────────────────────────────────────
+//
+// PRIVATE_SKILL_DIRS + the `_` prefix check in stage() are deny-by-name,
+// applied once at copy time — a skill that should have been marked private
+// but wasn't named `_Foo` or added to that set ships silently, because
+// runIdentifierGate() only greps file CONTENT for personal-identifier
+// patterns, never checks directory PROVENANCE. Proven live (2026-07-26): a
+// planted skill with generic text and no identifier-pattern matches shipped
+// completely undetected. This gate closes that gap in two layers:
+//   1. Fail-safe allow-list check against staged skills/ (deterministic,
+//      instant) — anything shipped but not on PUBLIC_SKILL_DIR_ALLOWLIST
+//      blocks release outright.
+//   2. For each unlisted directory, an LLM classification pass (Haiku, via
+//      Inference.ts) judges it against CreateSkill's own public/private
+//      decision rule (real name / real customer / real domain / real
+//      business process / real internal infra → must be private). This is
+//      advisory context for the human, not a second way to pass — the gate
+//      already failed at step 1 and stays failed regardless of the verdict.
+//      Per CLAUDE.md's fail-closed rule for inference calls in security
+//      paths: a timeout or unparseable response is treated as "flag it,"
+//      never as "assume it's fine."
+
+interface UnlistedSkillVerdict {
+  dir: string
+  classification: 'likely-public' | 'likely-private' | 'inference-failed'
+  reasoning: string
+}
+
+function classifyUnlistedSkill(dir: string, skillMdPath: string): UnlistedSkillVerdict {
+  let content: string
+  try {
+    content = readFileSync(skillMdPath, 'utf-8').slice(0, 4000)
+  } catch {
+    return { dir, classification: 'inference-failed', reasoning: 'could not read SKILL.md' }
+  }
+
+  const systemPrompt =
+    'You classify whether a Claude Code skill should be PUBLIC or PRIVATE per this rule: ' +
+    'a skill MUST be private if it mentions a specific person\'s name, a specific product/customer/client, ' +
+    'a paid API account or subscription, a private domain/hostname/internal IP, a private repo or local infra, ' +
+    'a company-specific business process, or specific financial/health/security/legal context. ' +
+    'Respond with EXACTLY one line: either "PUBLIC: <one sentence reason>" or "PRIVATE: <one sentence reason>". ' +
+    'No other output.'
+  const userPrompt = `Skill directory name: ${dir}\n\nSKILL.md content:\n${content}`
+
+  const r = spawnSync(
+    'bun',
+    [join(PAI_SRC, 'TOOLS', 'Inference.ts'), '--level', 'fast', systemPrompt, userPrompt],
+    { encoding: 'utf-8', stdio: 'pipe', timeout: 30_000 }
+  )
+
+  if (r.status !== 0 || !r.stdout?.trim()) {
+    return { dir, classification: 'inference-failed', reasoning: `Inference.ts exited ${r.status}, no usable output` }
+  }
+
+  const out = r.stdout.trim()
+  const m = out.match(/^(PUBLIC|PRIVATE):\s*(.+)$/is)
+  if (!m) {
+    return { dir, classification: 'inference-failed', reasoning: `unparseable response: ${out.slice(0, 200)}` }
+  }
+  return {
+    dir,
+    classification: m[1].toUpperCase() === 'PUBLIC' ? 'likely-public' : 'likely-private',
+    reasoning: m[2].trim(),
+  }
+}
+
+function runPrivateZoneGate(): { pass: boolean; unlisted: UnlistedSkillVerdict[] } {
+  log('\n🔒 Running private-zone gate (staged skill directories vs. allow-list)')
+  const skillsDir = join(STAGE_ROOT, 'skills')
+  if (!existsSync(skillsDir)) {
+    log('  ✓ Private-zone gate: no staged skills/ — skipping')
+    return { pass: true, unlisted: [] }
+  }
+
+  const staged = readdirSync(skillsDir).filter(e => statSync(join(skillsDir, e)).isDirectory())
+  const unlistedDirs = staged.filter(e => !PUBLIC_SKILL_DIR_ALLOWLIST.has(e))
+
+  if (unlistedDirs.length === 0) {
+    log(`  ✓ Private-zone gate: clean — all ${staged.length} staged skills on allow-list`)
+    return { pass: true, unlisted: [] }
+  }
+
+  fail(`Private-zone gate: ${unlistedDirs.length} staged skill(s) not on PUBLIC_SKILL_DIR_ALLOWLIST`)
+  const verdicts: UnlistedSkillVerdict[] = []
+  for (const dir of unlistedDirs) {
+    const skillMd = join(skillsDir, dir, 'SKILL.md')
+    const verdict = classifyUnlistedSkill(dir, skillMd)
+    verdicts.push(verdict)
+    const tag = verdict.classification === 'likely-private' ? '⚠ LIKELY PRIVATE'
+      : verdict.classification === 'inference-failed' ? '⚠ COULD NOT CLASSIFY'
+      : 'looks public'
+    log(`    ${dir} — ${tag}: ${verdict.reasoning}`)
+  }
+  log('  → If these are legitimate new public skills, add them to PUBLIC_SKILL_DIR_ALLOWLIST and re-run.')
+  log('  → If any are private, add them to PRIVATE_SKILL_DIRS (or rename with a `_` prefix) and re-run.')
+  return { pass: false, unlisted: verdicts }
+}
+
+// ── Prose-tip gate (ISC-7) ────────────────────────────────────────────────────
+//
+// sanitizeSettingsJson()'s tips filtering has two allow-list-based checks
+// (slash-command names, env vars) that are structurally sound — but any tip
+// WITHOUT a leading slash-command falls through both filters unconditionally
+// and is only checked against STRIP_TIP_PATTERNS, a hand-maintained exact-
+// substring deny-list. A new prose tip added later that references specific
+// business/infra context ships silently unless someone remembers to add its
+// exact substring to that list. The identifier gate doesn't cover this either
+// — it only matches its own IP/machine-name/company regex set, not generic
+// prose. This gate batches all prose tips into a single classification call
+// and blocks release on any flag. No allow-list escape hatch here (unlike the
+// private-zone gate) — tips are meant to be fully generic content, so a
+// flagged tip should be rewritten or removed, not exempted.
+//
+// MODEL CHOICE (verified live, 2026-07-26): Haiku and Sonnet both missed a
+// known real leak (a port number: "...on pai:31337.") sitting among 19 other
+// tips in the same 20-item chunk that name skills/tools the prompt explicitly
+// says NOT to flag — dense true-negative context suppressed detection of the
+// one true positive, on BOTH Claude-family models, at every batch size tried
+// (3, 20, 144). MiniMax M3 via OpenRouter caught it correctly on the first
+// full 144-tip single-call attempt with the identical prompt, zero false
+// positives. This is the one place in this file that calls a non-Claude
+// model — a deliberate, evidence-based choice, not a default.
+
+interface FlaggedTip {
+  tip: string
+  reasoning: string
+}
+
+// Resolves via passage (PAI standard secret store), mirroring Inference.ts's
+// resolveAnthropicApiKey() pattern exactly: env var first, then spawn `passage
+// show <key>` with piped stdout (never via shell command-substitution string —
+// a prior Cato/Anvil audit flagged `$(passage show ...)` for briefly exposing
+// the key in /proc and `ps aux` process listings during the substitution).
+async function readOpenRouterApiKey(): Promise<string | null> {
+  const envKey = process.env.OPENROUTER_API_KEY
+  if (envKey && envKey.trim()) return envKey.trim()
+  try {
+    const proc = Bun.spawn(['passage', 'show', 'api/openrouter'], { stdout: 'pipe', stderr: 'pipe' })
+    const key = (await new Response(proc.stdout).text()).trim()
+    await proc.exited
+    return key || null
+  } catch {
+    return null
+  }
+}
+
+// Ensemble size for classifyProseTips. Live-tested 2026-07-26: single-call
+// M3 classification against the real 144-tip corpus has a genuine, roughly
+// 20-30% miss rate on the one true leak in this corpus — NOT truncation,
+// a well-formed "[]" response that's simply wrong. This is a probabilistic
+// model-reliability issue, not fixable by prompt tuning or smaller batches
+// (halving the batch to ~70 tips reduced neither the truncation nor the
+// miss rate in a 2nd larger sample, despite looking clean in a first,
+// smaller sample — see ISA Changelog). A "first successfully-parsed
+// response wins" retry loop (the prior version of this function) cannot
+// defend against this: a genuine miss parses just fine as `[]`, so it looks
+// identical to "nothing to flag" and the retry loop would accept it
+// immediately. The only defense that showed 5/5 reliability in live testing
+// is running N independent full-batch attempts and OR-combining every
+// successfully-parsed result — a flag from ANY attempt is authoritative,
+// since a false negative on one run doesn't imply a false negative on all.
+const ENSEMBLE_SIZE = 5
+const MIN_SUCCESSFUL_PARSES = 3 // fail closed if fewer than this many attempts even parse
+
+async function classifyProseTipsOnce(
+  tips: string[], systemPrompt: string, userPrompt: string, apiKey: string
+): Promise<{ parsed: true; flagged: FlaggedTip[] } | { parsed: false; error: string }> {
+  let resp: Response
+  try {
+    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'minimax/minimax-m3',
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+      }),
+      signal: AbortSignal.timeout(45_000),
+    })
+  } catch (e) {
+    return { parsed: false, error: `OpenRouter request failed: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  if (!resp.ok) {
+    return { parsed: false, error: `OpenRouter returned HTTP ${resp.status}` }
+  }
+  try {
+    const body: any = await resp.json()
+    const content: string = body?.choices?.[0]?.message?.content ?? ''
+    const jsonMatch = content.match(/\[[\s\S]*\]/)
+    const candidate = jsonMatch ? jsonMatch[0] : content
+    const parsed = JSON.parse(candidate)
+    if (!Array.isArray(parsed)) throw new Error('not an array')
+    const flagged: FlaggedTip[] = parsed
+      .filter((p: any) => typeof p.line === 'number' && p.line >= 1 && p.line <= tips.length)
+      .map((p: any) => ({ tip: tips[p.line - 1], reasoning: p.reason ?? '(no reason given)' }))
+    return { parsed: true, flagged }
+  } catch (e) {
+    return { parsed: false, error: `unparseable: ${e instanceof Error ? e.message : String(e)} — raw content missing/truncated` }
+  }
+}
+
+async function classifyProseTips(tips: string[]): Promise<{ flagged: FlaggedTip[]; failed: boolean }> {
+  if (tips.length === 0) return { flagged: [], failed: false }
+
+  const apiKey = await readOpenRouterApiKey()
+  if (!apiKey) {
+    return { flagged: [{ tip: '(all tips)', reasoning: 'OPENROUTER_API_KEY not set (env or ~/.claude/.env) — fail-closed' }], failed: true }
+  }
+
+  const systemPrompt =
+    'Review each numbered tip line. A tip is FLAGGED if it contains any of: a network port number, ' +
+    'a private IP address or hostname, a credential or token value, a specific person\'s name, a specific ' +
+    'customer or company name (other than well-known AI vendors). ' +
+    'A tip is NOT flagged just for naming a skill, tool, or feature of this open-source project, or the ' +
+    'project itself by name (e.g. Council, RedTeam, hooks, MEMORY, Algorithm, "secunit" — secunit IS this ' +
+    'project\'s own public name, not a customer) — those are intentionally public. ' +
+    'Output a JSON array like [{"line":1,"reason":"..."}] listing ONLY flagged lines. ' +
+    'Output exactly [] if nothing is flagged. Output nothing else.'
+  const userPrompt = tips.map((t, i) => `${i + 1}. ${t}`).join('\n')
+
+  // Sequential, not Promise.all — live-tested 2026-07-26: firing all 5 ensemble
+  // calls concurrently measurably raised the truncation rate (multiple
+  // simultaneous truncations/malformed-JSON responses, occasionally enough to
+  // trip MIN_SUCCESSFUL_PARSES and fail-closed on transient API flakiness
+  // rather than real risk). 8/8 sequential calls in the same test came back
+  // clean with zero truncation. Slower (~5x latency) but reliable — the right
+  // tradeoff for a release gate that runs once per release, not per request.
+  const results: Array<{ parsed: true; flagged: FlaggedTip[] } | { parsed: false; error: string }> = []
+  for (let i = 0; i < ENSEMBLE_SIZE; i++) {
+    results.push(await classifyProseTipsOnce(tips, systemPrompt, userPrompt, apiKey))
+  }
+
+  const successfulParses = results.filter((r): r is { parsed: true; flagged: FlaggedTip[] } => r.parsed)
+  const errors = results.filter((r): r is { parsed: false; error: string } => !r.parsed).map(r => r.error)
+
+  if (successfulParses.length < MIN_SUCCESSFUL_PARSES) {
+    return {
+      flagged: [{
+        tip: '(all tips)',
+        reasoning: `only ${successfulParses.length}/${ENSEMBLE_SIZE} ensemble calls parsed successfully (need ${MIN_SUCCESSFUL_PARSES}) — fail-closed. Errors: ${errors.slice(0, 3).join(' | ')}`,
+      }],
+      failed: true,
+    }
+  }
+
+  // OR-combine: a flag on ANY successful attempt is authoritative. Dedupe by tip text
+  // since the same real leak will typically get flagged by multiple attempts.
+  const seen = new Map<string, FlaggedTip>()
+  for (const r of successfulParses) {
+    for (const f of r.flagged) {
+      if (!seen.has(f.tip)) seen.set(f.tip, f)
+    }
+  }
+  return { flagged: [...seen.values()], failed: false }
+}
+
+async function runProseTipGate(): Promise<{ pass: boolean; flagged: FlaggedTip[] }> {
+  log('\n📝 Running prose-tip gate (settings.json spinnerTipsOverride.tips)')
+  const settingsPath = join(STAGE_ROOT, 'PAI', 'settings.json')
+  if (!existsSync(settingsPath)) {
+    log('  ✓ Prose-tip gate: no staged settings.json — skipping')
+    return { pass: true, flagged: [] }
+  }
+
+  let tips: string[]
+  try {
+    const raw = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+    tips = raw.spinnerTipsOverride?.tips ?? []
+  } catch {
+    fail('Prose-tip gate: could not parse staged settings.json — fail-closed')
+    return { pass: false, flagged: [{ tip: '(all tips)', reasoning: 'staged settings.json unparseable' }] }
+  }
+
+  const prose = tips.filter((t: string) => !/^\/[\w-]+/.test(t))
+  const { flagged, failed } = await classifyProseTips(prose)
+
+  if (failed) {
+    fail(`Prose-tip gate: classifier call failed — ${flagged[0]?.reasoning}`)
+    return { pass: false, flagged }
+  }
+  if (flagged.length === 0) {
+    log(`  ✓ Prose-tip gate: clean — ${prose.length} prose tips reviewed, none flagged`)
+    return { pass: true, flagged: [] }
+  }
+
+  fail(`Prose-tip gate: ${flagged.length} tip(s) flagged out of ${prose.length} prose tips`)
+  for (const f of flagged) {
+    log(`    "${f.tip.slice(0, 80)}${f.tip.length > 80 ? '...' : ''}" — ${f.reasoning}`)
+  }
+  log('  → Rewrite or remove flagged tips in the source spinnerTipsOverride.tips array and re-run.')
+  return { pass: false, flagged }
 }
 
 // ── ADR stub gate ─────────────────────────────────────────────────────────────
@@ -1224,12 +1553,16 @@ async function main() {
   const adrOk = runAdrStubGate()
   const secretOk = runSecretScan()
   const { pass: identOk, hits } = runIdentifierGate()
+  const { pass: privZoneOk, unlisted } = runPrivateZoneGate()
+  const { pass: proseTipOk, flagged } = await runProseTipGate()
 
-  if (!adrOk || !secretOk || !identOk) {
+  if (!adrOk || !secretOk || !identOk || !privZoneOk || !proseTipOk) {
     fail(`\nRelease gate FAILED`)
     fail(`  ADR stub gate: ${adrOk ? 'pass' : 'FAIL'}`)
     fail(`  SecretScan: ${secretOk ? 'pass' : 'FAIL'}`)
     fail(`  Identifier gate: ${identOk ? 'pass' : `FAIL (${hits.length} hits)`}`)
+    fail(`  Private-zone gate: ${privZoneOk ? 'pass' : `FAIL (${unlisted.length} unlisted)`}`)
+    fail(`  Prose-tip gate: ${proseTipOk ? 'pass' : `FAIL (${flagged.length} flagged)`}`)
     log(`\nStaged output preserved for inspection: ${STAGE_ROOT}`)
     process.exit(1)
   }

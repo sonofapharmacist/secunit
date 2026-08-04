@@ -173,7 +173,11 @@ export async function runCLI(): Promise<void> {
       print(`  ${c.gray}Progress: ${getProgress(saved)}% (${saved.completedSteps.length} steps completed)${c.reset}`);
       print("");
 
-      const resume = await promptConfirm("Resume previous installation?");
+      // requireExplicit: resuming overwrites/deletes live files (see
+      // moveExistingClaudeToBackup in engine/actions.ts) — automated mode
+      // must not silently consent to this the way it does for config
+      // defaults. Needs PAI_CONFIRM_OVERWRITE=1, not just PAI_TEST_AUTOMATED.
+      const resume = await promptConfirm("Resume previous installation?", true, undefined, true);
       if (resume) {
         state = saved;
         state.mode = "cli";
@@ -296,7 +300,7 @@ export async function runCLI(): Promise<void> {
     print(`  ${c.gray}and how you think. Two paths to do that:${c.reset}`);
     print("");
     print(`  ${c.lightBlue}${c.bold}Fast path — let the DA interview you:${c.reset}`);
-    print(`  ${c.gray}1.${c.reset} Run ${c.bold}source ~/.zshrc && pai${c.reset}${c.gray} to launch PAI.${c.reset}`);
+    print(`  ${c.gray}1.${c.reset} Run ${c.bold}cd ~/.claude && claude${c.reset}${c.gray} to launch PAI.${c.reset}`);
     print(`  ${c.gray}2.${c.reset} Type ${c.bold}/interview${c.reset}${c.gray} — the DA walks through TELOS, identity, projects, preferences. Pause and resume anytime.${c.reset}`);
     print(`     ${c.gray}(Already have goals/journals/notes in Obsidian, Notion, etc.? Run the ${c.bold}Migrate${c.reset}${c.gray} skill first so the interview fills gaps instead of asking you to re-type.)${c.reset}`);
     print("");

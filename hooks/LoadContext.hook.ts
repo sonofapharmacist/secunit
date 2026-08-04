@@ -3,8 +3,7 @@
  * LoadContext.hook.ts - Inject PAI dynamic context into Claude's Context (SessionStart)
  *
  * PAI v5.0 Context Architecture:
- * - Constitutional rules     → PAI/PAI_SYSTEM_PROMPT.md (system prompt via --append-system-prompt-file)
- * - Operational procedures   → CLAUDE.md (loaded natively by Claude Code)
+ * - Operational rules        → CLAUDE.md (loaded natively by Claude Code; single top layer)
  * - Contextual knowledge     → @imports in CLAUDE.md (native Claude Code mechanism, v5.0)
  * - Dynamic context          → this hook (relationship, learning, work)
  *
@@ -28,8 +27,7 @@
  * - exit(0): Normal completion
  *
  * DESIGN (v5.0):
- * Constitutional rules live in the system prompt (PAI/PAI_SYSTEM_PROMPT.md).
- * Operational procedures + contextual knowledge live in CLAUDE.md (@imports, native).
+ * Operational rules + contextual knowledge live in CLAUDE.md (@imports, native).
  * This hook injects dynamic, session-specific context only (relationship, learning, work).
  *
  * PERFORMANCE:
@@ -542,7 +540,7 @@ ${lines.join('\n')}
 PAI Dynamic Context (Auto-loaded at Session Start)
 ${standingInstructions ? '\n' + standingInstructions + '---\n' : ''}${relationshipContext ?? ''}${learningContext ? '\n---\n' + learningContext : ''}
 ---
-Dynamic context loaded. Constitutional rules are in the system prompt (PAI/PAI_SYSTEM_PROMPT.md). Operational procedures are in CLAUDE.md.
+Dynamic context loaded. Operational rules and format templates are in CLAUDE.md.
 </system-reminder>`;
 
       console.log(message);

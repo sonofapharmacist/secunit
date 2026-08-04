@@ -1,9 +1,9 @@
 # PAI Containment Policy
 
-**Status:** Authoritative. Contributors and future Kai sessions read this before adding a new file.
-**Enforcement:** `hooks/ContainmentGuard.hook.ts` (prospective, PreToolUse). `skills/_PAI/TOOLS/ShadowRelease.ts` G1-G5 gates (retrospective, pre-release).
-**Zone inventory (authoritative):** `hooks/lib/containment-zones.ts` — the runtime source of truth both enforcers import.
-**Last updated:** 2026-04-29
+**Status:** Conceptual reference only — the zone model below is sound, but the enforcement mechanisms this document originally described are upstream PAI code that never ran in this tree. See `PAI/DOCUMENTATION/Decisions/containment-enforcement-consolidation.md`.
+**Enforcement (actual):** `PAI/TOOLS/release.ts` — `PERSONAL_PATTERNS` identifier gate, `PRIVATE_SKILL_DIRS` + `_` prefix skill exclusion, SecretScan, and ADR-stub gates, all hard-failing at release time. Plus the behavioral rule in `CLAUDE.md` Operational Rules for surfaces the gate cannot see (web tools, pastebins, public repos outside the release path).
+**Retired:** `hooks/ContainmentGuard.hook.ts` (never registered; hardcoded to upstream identity strings) and `hooks/lib/containment-zones.ts`. `skills/_PAI/TOOLS/ShadowRelease.ts` does not exist in this tree.
+**Last updated:** 2026-07-24
 
 ---
 
@@ -17,7 +17,7 @@ That is the rule. Everything else on this page is either a definition, a consequ
 
 ## Zones are a living inventory, not a fixed set
 
-There is no magic number of zones. PAI evolves — new sensitive surfaces appear, old ones get retired or relocated — and the zone list must keep up. The snapshot below reflects what's in `hooks/lib/containment-zones.ts` right now; check that file for the truth of the moment.
+There is no magic number of zones. PAI evolves — new sensitive surfaces appear, old ones get retired or relocated — and the zone list must keep up. The snapshot below is a conceptual reference. `hooks/lib/containment-zones.ts` was deleted (see the retirement ADR) — the enforced exclusions now live in `PAI/TOOLS/release.ts` (`PRIVATE_SKILL_DIRS` + `_` prefix for skills; `strip()` for directory zones).
 
 Today's zones:
 
@@ -36,16 +36,16 @@ The underscore-prefix rule for `private-skills` is the interface contract. If a 
 
 ## Mandatory zone review before every shadow release
 
-Zones drift. Before running `ShadowRelease --create <version>`:
+Zones drift. Before running `bun PAI/TOOLS/release.ts`:
 
-1. Open `hooks/lib/containment-zones.ts`.
+1. Open `PAI/TOOLS/release.ts` and read `strip()` plus `PRIVATE_SKILL_DIRS`.
 2. Walk `~/.claude/` at depth 1-2 (e.g. `ls -la && ls -la PAI/ && ls -la skills/`) and compare against the zone list.
 3. Ask, for every new top-level or first-nested dir since the last release:
     - Does it contain anything principal-specific? → **Add a zone or extend an existing one.**
-    - Is it runtime state the harness writes? → **Add it to `install-state` or the RSYNC_EXCLUDES in `ShadowRelease.ts`.**
+    - Is it runtime state the harness writes? → **Add a `rm()` call in `release.ts`'s `strip()`.**
     - Is it clean-by-construction and intended for public? → **Leave it; document via README if its purpose is ambiguous.**
-4. Update `CONTAINMENT_ZONES` and/or `PATTERN_ALLOWLIST_FILES` in `hooks/lib/containment-zones.ts` accordingly.
-5. Commit the zone change BEFORE the shadow-release commit. The zone file is the contract; the release gates verify against it. Releasing against a stale contract is the failure mode this step exists to prevent.
+4. Update `strip()`, `PRIVATE_SKILL_DIRS`, or `PERSONAL_PATTERNS` in `PAI/TOOLS/release.ts` accordingly.
+5. Commit the exclusion change BEFORE the release commit. The zone file is the contract; the release gates verify against it. Releasing against a stale contract is the failure mode this step exists to prevent.
 
 **Rule of thumb:** if you look at the zone file and you cannot immediately tell that it matches reality, stop and reconcile before building a release.
 
@@ -59,9 +59,9 @@ A file outside every configured zone is a policy violation if it contains any of
 - **Infrastructure IDs** — Cloudflare account or KV namespace IDs, ElevenLabs voice IDs, launchd bundle IDs, any UUID that identifies a specific account or resource
 - **Secrets** — API tokens, private keys (`.pem`, `.key`), session cookies, OAuth refresh tokens
 
-The `hooks/ContainmentGuard.hook.ts` enforces the identity and CF-ID list prospectively on every Edit/Write/MultiEdit. The `ShadowRelease --check` gates enforce all three categories retrospectively before release.
+`PAI/TOOLS/release.ts` enforces all three categories retrospectively at release time via `PERSONAL_PATTERNS` (identifier gate) and SecretScan. There is no prospective write-time guard — `ContainmentGuard.hook.ts` was retired (never registered, upstream-identity patterns).
 
-The concrete patterns live in `hooks/ContainmentGuard.hook.ts` (`IDENTITY_PATTERNS` constant) and `skills/_PAI/TOOLS/ShadowRelease.ts` (`IDENTITY_PATTERNS` + `CF_ID_PATTERNS`). When a new principal-specific string enters the threat model, add it to both places.
+The concrete patterns live in `PAI/TOOLS/release.ts` (`PERSONAL_PATTERNS`). When a new principal-specific string enters the threat model, add it there — one place.
 
 ---
 
@@ -89,7 +89,7 @@ Put them under `PAI/MEMORY/**` (`runtime-memory`) or `PAI/USER/**` (`user-data`)
 
 ### I am adding a new top-level dir that should be private
 
-Add its pattern to `CONTAINMENT_ZONES` in `hooks/lib/containment-zones.ts` (create a new zone or extend an existing one), then commit. The guard hook and release gates both pick up the new zone automatically.
+Add a `rm()` call for it in `release.ts`'s `strip()`, then commit. The release gates pick it up on the next run.
 
 ### I am writing documentation that references the principal as author
 
@@ -102,31 +102,30 @@ Do not write docs that assume the reader IS the principal. The PAI public releas
 
 ### The file must contain a pattern in order to detect or block it
 
-Examples: `hooks/ContainmentGuard.hook.ts` has to embed principal patterns to scan for them; `hooks/security/inspectors/PatternInspector.ts` similarly. These are legitimate exceptions.
+Example: `hooks/security/inspectors/PatternInspector.ts` has to embed patterns to scan for them. `release.ts` itself is the other case — it carries the identifier list, which is why `SCAN_WHITELIST` exempts it from its own gate.
 
-Record them in `PATTERN_ALLOWLIST_FILES` in `hooks/lib/containment-zones.ts` (single source shared with both enforcers), with a note in the living appendix below explaining why the exception exists.
+Record them in `SCAN_WHITELIST` in `PAI/TOOLS/release.ts`, with a note in the living appendix below explaining why the exception exists.
 
 ---
 
 ## Release pipeline — how the policy is verified
 
 1. **Zone review** — per the mandatory step above. Happens before anything else.
-2. **Source audit** — grep the live tree against the identity plus CF-ID pattern list. Every hit outside the configured zones is a policy violation; fix at source (sanitize, relocate, or allowlist with justification).
-3. **Staging build** — `bun run skills/_PAI/TOOLS/ShadowRelease.ts --create <version>` clones the live tree with hard rsync exclusions, deletes zone contents (preserving only top-level READMEs as scaffold), overlays the public `settings.json`, `CLAUDE.md`, and `PAI_CONFIG.yaml` templates.
-4. **Five gates run against the staging tree:**
-    - **G1 — Zone deletion:** required public READMEs survive; forbidden personal files and persona dirs do not.
-    - **G2 — Identity grep:** no identity patterns in the staging tree (except allowlisted files).
-    - **G3 — CF ID grep:** no hardcoded CF account or KV namespace IDs (except allowlisted files).
-    - **G4 — trufflehog:** no live secrets detected.
-    - **G5 — .env strays:** no `.env*` files survived rsync exclusion.
-5. **Pass all five → READY FOR RELEASE.** Any fail → fix source or refine exclusions; never hide with allowlist unless the file legitimately needs the pattern.
+2. **Source audit** — grep the live tree against `PERSONAL_PATTERNS` in `PAI/TOOLS/release.ts`. Every hit outside the configured zones is a policy violation; fix at source (sanitize, relocate, or allowlist with justification).
+3. **Staging build** — `bun PAI/TOOLS/release.ts --bump <level>` clones the live tree with hard rsync exclusions, deletes zone contents (preserving only top-level READMEs as scaffold), overlays the public `settings.json`, `CLAUDE.md`, and `PAI_CONFIG.yaml` templates.
+4. **Four gates run against the staging tree** (`release.ts:1229-1245`):
+    - **ADR stub gate** — no `status: stub` ADRs in `PAI/DOCUMENTATION/Decisions/`.
+    - **SecretScan** — `PAI/TOOLS/SecretScan.ts` over the staged tree.
+    - **Identifier gate** — no `PERSONAL_PATTERNS` hits (except files in `SCAN_WHITELIST`).
+    - **Grype** — vulnerability scan; runs after the first three pass.
+5. **Pass all four → push prompt.** Any fail → `process.exit(1)` with the staged tree preserved at `~/.cache/secunit-stage` for inspection; fix source or refine exclusions, never hide with allowlist unless the file legitimately needs the pattern.
 6. **Public publish is a separate step.** The shadow release stays under `PAI/PAI_RELEASES/PAI_Release_v{VERSION}/.claude/` until a deliberate publish action ships it to the public repo.
 
 ---
 
 ## Shrinking-allowlist discipline
 
-`PATTERN_ALLOWLIST_FILES` in `hooks/lib/containment-zones.ts` lists files the enforcers skip. **Every entry is a TODO**, not a feature. The ideal end state is the minimum set of files that must embed patterns in order to detect or document them.
+`SCAN_WHITELIST` in `PAI/TOOLS/release.ts` lists files the identifier gate skips. **Every entry is a TODO**, not a feature. The ideal end state is the minimum set of files that must embed patterns in order to detect or document them.
 
 Every other entry should be removed by sanitizing the source file (preferred) or relocating it into a zone. Before adding a new allowlist entry, add a row to the living appendix below explaining why sanitization is not feasible.
 
@@ -138,10 +137,10 @@ Populated by the audit. Updated as files are sanitized or relocated.
 
 | File | Reason listed | Disposition |
 |------|---------------|-------------|
-| `hooks/ContainmentGuard.hook.ts` | Must embed every pattern to detect it | **KEEP** — legitimate exception |
-| `hooks/lib/containment-zones.ts` | Single source of truth module both enforcers import from | **KEEP** — legitimate exception |
+| ~~`hooks/ContainmentGuard.hook.ts`~~ | — | **DELETED** 2026-07-24 (never registered) |
+| ~~`hooks/lib/containment-zones.ts`~~ | — | **DELETED** 2026-07-24 (no live importers) |
 | `hooks/security/inspectors/PatternInspector.ts` | Pattern detector embeds patterns | **KEEP** — legitimate exception |
-| `skills/_PAI/TOOLS/ShadowRelease.ts` | Release tool must embed patterns for G2/G3 gates | **KEEP** — legitimate exception |
+| `PAI/TOOLS/release.ts` | Release tool must embed patterns for the identifier gate | **KEEP** — exempted via its own `SCAN_WHITELIST` |
 | `PAI/DOCUMENTATION/Tools/Containment.md` | Policy doc describes zones and references patterns categorically | **KEEP** — legitimate exception |
 | `skills/Daemon/Docs/SecurityClassification.md` | Documents the exact path patterns the Daemon filter should scrub | **KEEP** — legitimate exception |
 | `skills/Daemon/Tools/SecurityFilter.ts` | Pattern inspector test cases embed the patterns they filter | **KEEP** — legitimate exception |
@@ -155,4 +154,4 @@ Populated by the audit. Updated as files are sanitized or relocated.
 
 ## Updating this policy
 
-Edit this file directly. Commit with a message that starts with `policy:` so it's easy to find in git log. After any policy change, re-run `ShadowRelease --create <version>` and verify no gates regress.
+Edit this file directly. Commit with a message that starts with `policy:` so it's easy to find in git log. After any policy change, re-run `bun PAI/TOOLS/release.ts --scan-only` to confirm the gates still pass. (legacy: `ShadowRelease --create <version>` and verify no gates regress.

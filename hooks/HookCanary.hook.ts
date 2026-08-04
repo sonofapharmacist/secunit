@@ -14,7 +14,7 @@ import { appendFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 
 const PAI_DIR = join(process.env.HOME!, '.claude');
-const CANARY_PATHS = ['hooks/', 'settings.json', 'PAI/PAI_SYSTEM_PROMPT.md'];
+const CANARY_PATHS = ['hooks/', 'settings.json', 'CLAUDE.md'];
 const SECURITY_LOG = join(PAI_DIR, 'PAI/MEMORY/OBSERVABILITY/security-events.jsonl');
 const PULSE_URL = 'http://localhost:31337/notify';
 

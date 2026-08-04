@@ -364,9 +364,6 @@ if [ "$context_pct" = "0" ] && [ "$total_input" -eq 0 ] 2>/dev/null; then
         # CLAUDE.md (loaded natively by Claude Code, ~3.5 chars/token)
         [ -f "$CLAUDE_HOME/CLAUDE.md" ] && _est=$((_est + $(wc -c < "$CLAUDE_HOME/CLAUDE.md") * 10 / 35))
 
-        # System prompt (loaded via --append-system-prompt-file, ~3.5 chars/token)
-        [ -f "$PAI_DIR/PAI_SYSTEM_PROMPT.md" ] && _est=$((_est + $(wc -c < "$PAI_DIR/PAI_SYSTEM_PROMPT.md") * 10 / 35))
-
         # loadAtStartup files (injected by LoadContext.hook.ts as system-reminders)
         while IFS= read -r _f; do
             [ -n "$_f" ] && [ -f "$PAI_DIR/$_f" ] && _est=$((_est + $(wc -c < "$PAI_DIR/$_f") * 10 / 35))
@@ -1277,8 +1274,9 @@ printf "${SLATE_600}%s${RESET}\n" "$SEP_DASHED"
 # Reads PAI/USER/TELOS/PAI_STATE.json (written by ComputeGap.ts on a schedule).
 # Falls back to placeholder values if the state file is missing.
 # Format: STATE: HEALTH 68%│CREATIVE 31%│FREEDOM 78%│RELATIONSHIPS 84%│FINANCIAL 42%
-# Followed by the CC/PAI/ALG/SK/WF/HK version banner. Both blocks suppress on
-# work-profile machines (no personal TELOS data → no meaningful STATE).
+# Suppressed on work-profile machines (no personal TELOS data → no meaningful
+# STATE). The CC/PAI/ALG/SK version banner below is unconditional — it's not
+# personal data, so it renders on work profile too.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if ! _is_work_profile; then
@@ -1342,10 +1340,11 @@ for _i in "${!_dims[@]}"; do
 done
 printf "\n"
 sep
+
+fi  # end _is_work_profile gate (STATE meters only)
+
 printf "${SLATE_400}CLI:${RESET} ${PAI_A}${cc_version}${RESET} ${SLATE_600}│${RESET} ${SLATE_500}SECU:${PAI_A}${PAI_VERSION}${RESET} ${SLATE_400}ALG:${PAI_A}${ALGO_VERSION}${RESET} ${SLATE_600}│${RESET} ${WIELD_ACCENT}SKILLS:${RESET} ${SLATE_300}${public_skills}${RESET}\n"
 sep
-
-fi  # end _is_work_profile gate (STATE + CC banner)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LINE 1: CONTEXT (with context window detection)

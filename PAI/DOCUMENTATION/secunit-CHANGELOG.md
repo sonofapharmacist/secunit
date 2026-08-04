@@ -4,6 +4,19 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.6.0] — 2026-08-04
+
+### Added
+- **`DualCheck` is now a public skill.** Adversarial code-review check using two independent models called directly and in parallel (Devstral Medium via Mistral's own API, MiniMax M3 via OpenRouter's own API), reporting both verdicts side by side rather than treating either as the deciding vote. Was built in a prior session but never added to the release allow-list — the private-zone gate correctly flagged it as unlisted, review confirmed it's generic (env-var/secret-store key names only, no hardcoded credentials or business context) and safe to ship.
+
+### Fixed
+- **Release ADR `containment-enforcement-consolidation.md` quoted real principal-identifying strings** (home-directory username, personal email, employer name, machine hostnames) as prose examples of what the identifier gate's pattern list scans for. Genericized to placeholder language while preserving the documented reasoning — the identifier gate correctly caught this as a real leak, not a false positive, since an ADR that ships publicly by default shouldn't contain literal private values even when quoting them as illustrations.
+- **Two `settings.json` prose tips leaked a Tailscale-tailnet-specific hostname alias** (`pai:31337`) distinct from the generic `localhost:31337` convention used everywhere else in the codebase. Genericized or removed the port reference; the prose-tip gate's classifier correctly flagged both instances.
+- **`generateSBOM()` can report zero components for a reason unrelated to the original pre-strip fix.** If `PAI/TOOLS/node_modules` isn't installed at all (rather than merely stripped post-generation), cdxgen has nothing to enumerate and produces a technically-valid but empty SBOM — same failure signature as the bug the earlier SBOM-ordering fix addressed, different root cause. No code change; documenting the precondition here since the gate's error message doesn't distinguish the two cases.
+- **Two known-vulnerable dependency versions in the release toolchain.** `brace-expansion` 5.0.7 → 5.0.8 (GHSA-mh99-v99m-4gvg, HIGH), `tar` 7.5.19 → 7.5.21 (GHSA-r292-9mhp-454m, MEDIUM). Grype flagged both during a routine release scan; confirmed clean after the bump.
+
+---
+
 ## [0.5.1] — 2026-07-22
 
 ### Fixed

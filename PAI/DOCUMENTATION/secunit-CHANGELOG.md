@@ -4,6 +4,23 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.6.1] — 2026-08-04
+
+### Fixed
+- **The installer silently produced a broken harness on the machine configuration the README requires.** `install.sh`'s bundle-copy is skip-if-exists, and `settings.json` always already exists on a machine with Claude Code — which the README lists as a prerequisite. The shipped `settings.json` was therefore never applied: **58 hook registrations across 13 events** were dropped, along with `statusLine`, `contextFiles`, `env`, `spinnerVerbs` and roughly 30 other keys, while the script printed `✓`, printed `Done`, and exited 0. On a machine *without* prior Claude Code the same script installed perfectly, so the failure was invisible to anyone smoke-testing on a clean box. Replaced the `pai.*`-only merge with an ownership-aware merge: machine-owned keys (`hooks`, `statusLine`, `contextFiles`, …) take the template; user-owned keys (`permissions`, `model`, `theme`) are never touched; `env` is deep-merged so a user's own variables survive alongside secunit's. A backup is written to `settings.json.secunit-backup`. Found by running the fresh-clone smoke test against published v0.6.0.
+- **No public `CLAUDE.md` shipped at all.** The release correctly strips the private root `CLAUDE.md` (it carries identity, contacts, and business context) but staged no public replacement — it was absent from the repo root, from `PAI/TEMPLATES/`, and from `release.ts`'s promotion rules, even though the same mechanism already promotes `secunit-README.md` to `README.md`. A new user's DA booted with no modes, no format templates, and no context routing. Added `PAI/TEMPLATES/CLAUDE.md` (modes, operational rules, path routing) and a promotion rule that **throws rather than warns** when it is missing, since a release without it is precisely this bug.
+- **`permissions` is no longer merged from the template.** Unioning allow-lists would silently widen a user's security posture on install. The user's block is now preserved verbatim.
+
+### Added
+- **Post-install verification.** The installer now asserts its own outcome — hook-event and registration counts, `CLAUDE.md` presence, and the `skills/`, `hooks/`, and `PAI/` trees — then prints `Install INCOMPLETE` and exits non-zero with a named recovery path when any check fails. Copying a file is not the same as the configuration being in effect; a silent `Done` over a dead harness can no longer happen.
+- **`PAI_INSTALL_ROOT`.** Redirects the install target so the installer can be smoke-tested against a scratch directory instead of a real `~/.claude`. Unset, behavior is byte-identical to before.
+- **README next-steps names a concrete check.** Replaced the bare `/interview` pointer with what the installer does to `settings.json`, where the backup lands, and a one-question verification ("ask your DA what mode you're in") that confirms the harness actually loaded.
+
+### Security
+- **Two known-vulnerable dependency versions in the release toolchain.** `undici` 7.28.0 → 7.29.0 (GHSA-4cwx-7wf7-3272, HIGH) and `brace-expansion` 5.0.8 → 5.0.9 (GHSA-rgw5-rvv9-x895, HIGH). Pre-existing and unrelated to the installer work, but release-blocking; Grype confirmed clean after the bump.
+
+---
+
 ## [0.6.0] — 2026-08-04
 
 ### Added

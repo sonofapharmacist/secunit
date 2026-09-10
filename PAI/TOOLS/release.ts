@@ -259,13 +259,25 @@ function strip() {
   log('  ✓ PLANS/ stripped')
 
   // --- node_modules/ → strip everywhere -----------------------
-  rm(join(pai, 'TOOLS', 'node_modules'))
-  rm(join(pai, 'TOOLS', 'pipeline-monitor-ui', 'node_modules'))
-  rm(join(pai, 'PULSE', 'Observability', 'node_modules'))
-  log('  ✓ node_modules/ stripped (TOOLS, pipeline-monitor-ui, PULSE/Observability)')
-
-  rm(join(STAGE_ROOT, 'hooks', 'node_modules'))
-  log('  ✓ hooks/node_modules/ stripped')
+  // Recursive, not a fixed path list. v0.7.0 shipped 233 vendored files under
+  // PAI/PAI-Install/minimal/node_modules because that dir was gitignored on the
+  // live tree (so no gate saw it), rsync staged it, and the old fixed list
+  // didn't name it. Any node_modules anywhere in the stage is a bug; install.sh
+  // runs `bun install` on the user's machine.
+  const stripped: string[] = []
+  function stripNodeModules(dir: string) {
+    for (const entry of readdirSync(dir)) {
+      if (entry === '.git') continue
+      const full = join(dir, entry)
+      let st: ReturnType<typeof lstatSync>
+      try { st = lstatSync(full) } catch { continue }
+      if (!st.isDirectory() || st.isSymbolicLink()) continue
+      if (entry === 'node_modules') { rm(full); stripped.push(full.slice(STAGE_ROOT.length + 1)); continue }
+      stripNodeModules(full)
+    }
+  }
+  stripNodeModules(STAGE_ROOT)
+  log(`  ✓ node_modules/ stripped everywhere (${stripped.length}: ${stripped.join(', ') || 'none found'})`)
 
   // --- TOOLS/LiteLLM/ → strip (local configs carry live provider API keys) --
   rm(join(pai, 'TOOLS', 'LiteLLM'))

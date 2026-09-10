@@ -8,6 +8,13 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.7.1] — 2026-09-10
+
+### Fixed
+- **v0.7.0 shipped 233 vendored files under `PAI/PAI-Install/minimal/node_modules/`.** Removing the wizard left a gitignored `node_modules` on disk; staging copied it, no gate scans inside `node_modules`, and `release.ts`'s strip step only removed three fixed paths despite a comment claiming "everywhere". Strip is now a recursive walk that removes every `node_modules` directory in the stage and logs what it found. The shipped files were an unmodified copy of the MIT-licensed `yaml` package; nothing private, just wrong. v0.6.1 had zero such files, so this was a one-release regression.
+
+---
+
 ## [0.7.0] — 2026-09-10
 
 Onboarding rewrite plus two new enforcement layers: Bash zero-access paths at tool time, and a local-only semantic leak review at release time.

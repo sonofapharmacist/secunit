@@ -25,6 +25,7 @@ import { spawnSync } from 'child_process'
 import { tmpdir, homedir } from 'os'
 import { createInterface } from 'readline'
 import { parse as parseYaml, stringify as yamlStringify } from 'yaml'
+import { runSemanticLeakScan, PROSE_EXTS, type SemanticFlag } from './SemanticLeakGate'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -639,12 +640,20 @@ const SANITIZATIONS: Sanitization[] = [
     ],
   },
   {
-    rel: 'PAI/DOCUMENTATION/secunit-feature-diff.md',
-    replacements: [
-      [/\bubullm\b/g, 'host2'],
-      [/\bcsonprop\b/g, 'host1'],
-      [/Evolving Solutions/g, 'your-organization'],
-    ],
+    rel: 'PAI/DOCUMENTATION/Decisions/local-inference-dual-model-fast-standard-tier-2026-08-14.md',
+    replacements: [[/\bubullm\b/gi, 'your-inference-host']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Decisions/deepseek-r1-distill-routing-2026-08-10.md',
+    replacements: [[/\bubullm\b/gi, 'your-inference-host']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/Decisions/bench-vs-chat-sampler-tuning-2026-08-10.md',
+    replacements: [[/\bubullm\b/gi, 'your-inference-host']],
+  },
+  {
+    rel: 'PAI/DOCUMENTATION/ForkArchitectureCatalog.md',
+    replacements: [[/\bubullm\b/gi, 'your-inference-host']],
   },
   {
     rel: 'PAI/GOALS/moonshot-candidates.md',
@@ -870,13 +879,12 @@ const PERSONAL_PATTERNS: ScanPattern[] = [
   },
 ]
 
-function runIdentifierGate(): { pass: boolean; hits: Hit[] } {
-  log('\n🛡  Running personal identifier gate')
-  const hits: Hit[] = []
-
-  // Files that intentionally reference personal identifiers (the scanner itself, etc.)
-  const SCAN_WHITELIST = new Set(['PAI/TOOLS/release.ts'])
-
+// Single file-enumeration helper for every content gate. Returns staged-relative
+// paths whose extension is in `exts`, skipping build output, symlinks, and
+// node_modules. The identifier gate and the semantic leak gate both use this so
+// they cannot drift on what "the staged file set" means.
+function listStagedFiles(exts: Set<string>): string[] {
+  const out: string[] = []
   function walk(dir: string) {
     for (const entry of readdirSync(dir)) {
       if (entry === 'node_modules' || entry === '.next' || entry === 'out' || entry === '.cursor') continue
@@ -886,9 +894,25 @@ function runIdentifierGate(): { pass: boolean; hits: Hit[] } {
       if (st.isSymbolicLink()) continue
       if (st.isDirectory()) { walk(full); continue }
       const ext = entry.includes('.') ? '.' + entry.split('.').pop()! : ''
-      if (!TEXT_EXTS.has(ext)) continue
-      const rel = full.slice(STAGE_ROOT.length + 1)
-      if (SCAN_WHITELIST.has(rel)) continue
+      if (!exts.has(ext)) continue
+      out.push(full.slice(STAGE_ROOT.length + 1))
+    }
+  }
+  walk(STAGE_ROOT)
+  return out
+}
+
+function runIdentifierGate(): { pass: boolean; hits: Hit[] } {
+  log('\n🛡  Running personal identifier gate')
+  const hits: Hit[] = []
+
+  // Files that intentionally reference personal identifiers (the scanner itself, etc.)
+  const SCAN_WHITELIST = new Set(['PAI/TOOLS/release.ts'])
+
+  for (const rel of listStagedFiles(TEXT_EXTS)) {
+    if (SCAN_WHITELIST.has(rel)) continue
+    const full = join(STAGE_ROOT, rel)
+    {
       try {
         const lines = readFileSync(full, 'utf-8').split('\n')
         for (let i = 0; i < lines.length; i++) {
@@ -903,8 +927,6 @@ function runIdentifierGate(): { pass: boolean; hits: Hit[] } {
       } catch { /* skip unreadable files */ }
     }
   }
-
-  walk(STAGE_ROOT)
 
   if (hits.length === 0) {
     log('  ✓ Identifier gate: clean')
@@ -1106,7 +1128,17 @@ async function classifyProseTipsOnce(
   }
   try {
     const body: any = await resp.json()
-    const content: string = body?.choices?.[0]?.message?.content ?? ''
+    const msg = body?.choices?.[0]?.message ?? {}
+    let content: string = msg.content ?? ''
+    // MiniMax M3 sometimes emits the final answer at the tail of its reasoning
+    // stream and returns an empty `content` with finish_reason "stop" (root-caused
+    // 2026-09-10: 2/5 calls, verdict "[]" sitting at the end of `reasoning`).
+    // This was the "~1/3 flake". Fall back to the last JSON array in reasoning.
+    if (!content.trim()) {
+      const reasoning: string = msg.reasoning ?? msg.reasoning_content ?? ''
+      const tail = reasoning.match(/\[[^\[\]]*(?:\{[\s\S]*?\}[^\[\]]*)*\]\s*$/)
+      if (tail) content = tail[0]
+    }
     const jsonMatch = content.match(/\[[\s\S]*\]/)
     const candidate = jsonMatch ? jsonMatch[0] : content
     const parsed = JSON.parse(candidate)
@@ -1210,6 +1242,44 @@ async function runProseTipGate(): Promise<{ pass: boolean; flagged: FlaggedTip[]
   }
   log('  → Rewrite or remove flagged tips in the source spinnerTipsOverride.tips array and re-run.')
   return { pass: false, flagged }
+}
+
+// ── Semantic leak gate (advisory, local-only) ─────────────────────────────────
+//
+// The deterministic gates above match known patterns. This one asks a LOCAL
+// model whether staged prose would tell a stranger something private about a
+// real person. It is advisory: flags are printed for a human and never block
+// on their own. It fails closed: if the local endpoint is unset, non-private,
+// unreachable, or returns garbage, every unreviewed file is reported as such
+// rather than silently passing. There is no cloud fallback by design — the
+// question "is this private?" is itself private. Implementation and the
+// private-host guard live in SemanticLeakGate.ts.
+
+async function runSemanticLeakGate(): Promise<{ reviewed: boolean; flagged: SemanticFlag[]; summary: string }> {
+  log('\n🔍 Running semantic leak gate (advisory, local model only)')
+  const files = listStagedFiles(PROSE_EXTS)
+  const res = await runSemanticLeakScan({ files, root: STAGE_ROOT, log })
+  const modelFlags = res.flagged.filter(f => f.source === 'model')
+  const unreviewed = res.flagged.filter(f => f.source === 'unreviewed')
+  const secs = (res.wallMs / 1000).toFixed(1)
+  const summary = res.reviewed
+    ? `${modelFlags.length} flagged / ${res.filesScanned} prose files (${res.filesFromCache} cached, ${res.chunksSent} chunks sent, ${secs}s)`
+    : `UNREVIEWED — ${res.failure} (${unreviewed.length} files not reviewed, ${modelFlags.length} flagged before failure)`
+
+  if (!res.reviewed) {
+    fail(`Semantic leak gate: ${summary}`)
+    fail('  Fail-closed: treat every unreviewed file as needing manual review. No cloud fallback exists by design.')
+  } else if (modelFlags.length === 0) {
+    log(`  ✓ Semantic leak gate: clean — ${summary}`)
+  } else {
+    log(`  ⚠ Semantic leak gate: ${summary}`)
+  }
+  const show = modelFlags.slice(0, 40)
+  for (const f of show) log(`    ${f.file}${f.chunk ? `#${f.chunk}` : ''} — ${f.reason}`)
+  if (modelFlags.length > show.length) log(`    … ${modelFlags.length - show.length} more`)
+  if (unreviewed.length > 0 && VERBOSE) for (const f of unreviewed.slice(0, 40)) log(`    [unreviewed] ${f.file}`)
+  if (modelFlags.length > 0 || !res.reviewed) log('  → Advisory: review the files above. Flags never block on their own; unreviewed files are your call.')
+  return { reviewed: res.reviewed, flagged: res.flagged, summary }
 }
 
 // ── ADR stub gate ─────────────────────────────────────────────────────────────
@@ -1583,7 +1653,11 @@ async function main() {
     process.exit(1)
   }
 
-  log(`\n✅ All gates passed`)
+  log(`\n✅ All deterministic gates passed`)
+
+  // Advisory layer. Never blocks on its own, but is always printed and always
+  // acknowledged before a push — no flag skips this output.
+  const semantic = await runSemanticLeakGate()
   log(`   Staged output: ${STAGE_ROOT}`)
 
   const grypeOk = runGrype()
@@ -1597,7 +1671,10 @@ async function main() {
     return
   }
 
-  const go = YES || await confirm(`\nPush v${version} to ${FORGEJO_REMOTE}?`)
+  const semanticNote = semantic.flagged.length > 0 || !semantic.reviewed
+    ? ` (semantic leak gate: ${semantic.summary})`
+    : ''
+  const go = YES || await confirm(`\nPush v${version} to ${FORGEJO_REMOTE}?${semanticNote}`)
   if (!go) {
     log('Push cancelled. Staged output preserved.')
     return

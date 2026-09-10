@@ -208,10 +208,10 @@ If I cannot answer all five self-check items with evidence, I did not finish. I 
 Before any codex invocation:
 
 ```bash
-test -x ~/.bun/bin/codex || { echo '{"verdict":"unavailable","reason":"codex CLI not found at ~/.bun/bin/codex"}'; exit 2; }
+test -x ~/.bun/bin/codex || { echo '{"verdict":"unavailable","reason":"codex CLI not found at ~/.bun/bin/codex","path":"codex"}'; exit 2; }
 ```
 
-No silent fallback to another tool. If Codex is unavailable, I report unavailable. the DA decides what to do.
+**Cascade (2026-08-08+):** If codex is present but the call fails (exit ≠ 0, 300s timeout, or upstream-error stderr pattern), `ForgeProgress.ts` auto-routes the same prompt to `bun ~/.claude/PAI/TOOLS/ForgeOpenRouter.ts --model openai/gpt-5.4-codex` and stamps `path: "openrouter-fallback"` on the final stdout. This is a **documented, flagged** fallback — not a silent one. The doctrine "no silent fallbacks I select myself" still holds: the helper does the routing, the path field tells me which model ran. Override the fallback model with `--fallback-model <model>`. Pass `--no-fallback` for strict fail-closed semantics. See `PAI/DOCUMENTATION/Decisions/forge-cato-codex-openrouter-cascade.md`.
 
 ---
 

@@ -1,19 +1,19 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:066c8ec1-5868-46e3-81ab-c990f49d1e80",
+  "serialNumber": "urn:uuid:4dadc6b4-4dec-4935-b4fb-e02bed041499",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-04T12:30:25Z",
+    "timestamp": "2026-09-10T19:58:16Z",
     "tools": {
       "components": [
         {
           "group": "@cyclonedx",
           "name": "cdxgen",
-          "version": "12.8.2",
-          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.8.2",
+          "version": "12.8.4",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.8.4",
           "type": "application",
-          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.8.2",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.8.4",
           "author": "OWASP Foundation",
           "publisher": "OWASP Foundation"
         }
@@ -36,7 +36,7 @@
       "bom-ref": "pkg:npm/@pai/tools",
       "properties": [],
       "type": "application",
-      "version": "0.6.1"
+      "version": "0.7.0"
     },
     "properties": [
       {
@@ -5504,7 +5504,7 @@
       "author": "Lovell Fuller <npm@lovell.info>",
       "group": "",
       "name": "sharp",
-      "version": "0.35.0",
+      "version": "0.35.4",
       "description": "High performance Node.js image processing, the fastest module to resize JPEG, PNG, WebP, GIF, AVIF and TIFF images",
       "licenses": [
         {
@@ -5536,7 +5536,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/sharp@0.35.0",
+      "purl": "pkg:npm/sharp@0.35.4",
       "externalReferences": [
         {
           "type": "website",
@@ -5544,11 +5544,11 @@
         },
         {
           "type": "vcs",
-          "url": "git://github.com/lovell/sharp.git"
+          "url": "git+https://github.com/lovell/sharp.git"
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/sharp@0.35.0",
+      "bom-ref": "pkg:npm/sharp@0.35.4",
       "properties": [
         {
           "name": "SrcFile",
@@ -6616,7 +6616,7 @@
       "author": "Lovell Fuller <npm@lovell.info>",
       "group": "@img",
       "name": "sharp-linux-x64",
-      "version": "0.35.0",
+      "version": "0.35.4",
       "description": "Prebuilt sharp for use with Linux (glibc) x64",
       "licenses": [
         {
@@ -6648,7 +6648,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40img/sharp-linux-x64@0.35.0",
+      "purl": "pkg:npm/%40img/sharp-linux-x64@0.35.4",
       "externalReferences": [
         {
           "type": "website",
@@ -6660,7 +6660,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/@img/sharp-linux-x64@0.35.0",
+      "bom-ref": "pkg:npm/@img/sharp-linux-x64@0.35.4",
       "properties": [
         {
           "name": "SrcFile",
@@ -6689,7 +6689,7 @@
       "author": "Lovell Fuller <npm@lovell.info>",
       "group": "@img",
       "name": "sharp-libvips-linux-x64",
-      "version": "1.3.0",
+      "version": "1.3.3",
       "description": "Prebuilt libvips and dependencies for use with sharp on Linux (glibc) x64",
       "licenses": [
         {
@@ -6721,7 +6721,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.0",
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.3",
       "externalReferences": [
         {
           "type": "website",
@@ -6733,7 +6733,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.0",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.3",
       "properties": [
         {
           "name": "SrcFile",
@@ -6830,7 +6830,7 @@
       "author": "Lovell Fuller <npm@lovell.info>",
       "group": "@img",
       "name": "sharp-linuxmusl-x64",
-      "version": "0.35.0",
+      "version": "0.35.4",
       "description": "Prebuilt sharp for use with Linux (musl) x64",
       "licenses": [
         {
@@ -6862,7 +6862,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40img/sharp-linuxmusl-x64@0.35.0",
+      "purl": "pkg:npm/%40img/sharp-linuxmusl-x64@0.35.4",
       "externalReferences": [
         {
           "type": "website",
@@ -6874,7 +6874,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.0",
+      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.4",
       "properties": [
         {
           "name": "SrcFile",
@@ -6903,7 +6903,7 @@
       "author": "Lovell Fuller <npm@lovell.info>",
       "group": "@img",
       "name": "sharp-libvips-linuxmusl-x64",
-      "version": "1.3.0",
+      "version": "1.3.3",
       "description": "Prebuilt libvips and dependencies for use with sharp on Linux (musl) x64",
       "licenses": [
         {
@@ -6935,7 +6935,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.0",
+      "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.3",
       "externalReferences": [
         {
           "type": "website",
@@ -6947,7 +6947,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.0",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.3",
       "properties": [
         {
           "name": "SrcFile",

@@ -213,7 +213,7 @@ Two storage layers: PAI MEMORY (`PAI/MEMORY/`) for structured, hook-driven, enti
 
 **Three distinct agent systems that serve different purposes.**
 
-Task Tool Subagent Types are pre-built agents in Claude Code (Architect, Engineer, Explore, etc.) for internal workflow use. **`BrowserAgent`, `UIReviewer`, and `QATester` are DEPRECATED** — replaced by the **Interceptor** skill (real Chrome, no CDP fingerprint). Cross-vendor agents extend coverage: **Forge** (OpenAI-family GPT-5.4 via `codex exec`) writes production-grade code at E3+; **Cato** (cross-vendor auditor) is MANDATORY at E4/E5 in VERIFY (Algorithm Rule 2a). **Anvil** (Kimi K2.6 via Moonshot API) provides whole-project long-context reasoning. Named Agents are persistent identities with backstories and ElevenLabs voices for recurring work. Custom Agents are dynamic compositions via ComposeAgent from base traits. The word "custom" is the routing trigger -- when the user says "custom agents," invoke the Agents skill, never Task tool subagent types. Background agents are supervised by the Agent Watchdog (`Tools/AgentWatchdog.ts`) — a Monitor-tool script that detects hung agents via tool-activity.jsonl silence, auto-triggered by the Pulse agent-guard hook.
+Task Tool Subagent Types are pre-built agents in Claude Code (Architect, Engineer, Explore, etc.) for internal workflow use. **`BrowserAgent`, `UIReviewer`, and `QATester` are DEPRECATED** — replaced by the **Interceptor** skill (real Chrome, no CDP fingerprint). Cross-vendor agents extend coverage: **Forge** (OpenAI-family GPT-5.4 via `codex exec`) writes production-grade code at E3+; **Cato** (cross-vendor auditor) is MANDATORY at E4/E5 in VERIFY (Algorithm Rule 2a). **Anvil** (LongCat 2.0 via OpenRouter, default since 2026-08-08; Kimi K2.6/Moonshot on explicit override) provides whole-project long-context reasoning. Named Agents are persistent identities with backstories for recurring work. Custom Agents are dynamic compositions via ComposeAgent from base traits. The word "custom" is the routing trigger -- when the user says "custom agents," invoke the Agents skill, never Task tool subagent types. Background agents are supervised by the Agent Watchdog (`Tools/AgentWatchdog.ts`) — a Monitor-tool script that detects hung agents via tool-activity.jsonl silence, auto-triggered by the Pulse agent-guard hook.
 
 - **Status:** Active
 - **Location:** `~/.claude/agents/`
@@ -244,7 +244,11 @@ Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. `PAI_CON
 
 **Four-hook inspector pipeline with SYSTEM/USER two-tier pattern architecture.**
 
-SecurityPipeline (PreToolUse: Bash, Write, Edit, MultiEdit) runs composable inspector chain -- PatternInspector(100), EgressInspector(90) -- against patterns.yaml. RulesInspector(50) is disabled (empty SECURITY_RULES.md, all rules migrated to deterministic inspectors). ContentScanner (PostToolUse: WebFetch, WebSearch) runs InjectionInspector to detect prompt injection in external content. SmartApprover (PermissionRequest) auto-approves trusted workspaces with read/write classification. PromptGuard (UserPromptSubmit) runs PromptInspector(95) for heuristic-only detection of injection, exfiltration, evasion, and security disable attempts -- no LLM inference. Inspector core lives in `hooks/security/{types,pipeline,logger}.ts` with individual inspectors in `hooks/security/inspectors/`.
+SecurityPipeline (PreToolUse: Bash, Write, Edit, MultiEdit) runs a composable inspector chain -- CanaryInspector(95), PatternInspector(100), EgressInspector(90), RulesInspector(50) -- sorted by priority descending, short-circuiting on the first `deny`. RulesInspector is effectively inert (no SECURITY_RULES.md on disk; all rules migrated to deterministic inspectors) but remains wired so policy rules can be reintroduced without a code change. ContentScanner (PostToolUse: WebFetch, WebSearch) runs InjectionInspector(80) to detect prompt injection in external content. SmartApprover (PermissionRequest) auto-approves trusted workspaces with read/write classification. PromptGuard (UserPromptSubmit) runs PromptInspector(95) for heuristic-only detection of injection, exfiltration, evasion, and security disable attempts -- no LLM inference. Inspector core lives in `hooks/security/{types,pipeline,logger}.ts` with individual inspectors in `hooks/security/inspectors/`.
+
+**Session canary.** CanarySession (SessionStart) plants a per-session token; CanaryInspector checks every PreToolUse call for it. Appearance of the canary in tool arguments, file content, or a URL is a deterministic exfiltration signal rather than a heuristic. HookCanary (SessionStart) separately verifies the hook chain is live, so a silently-unloaded security hook is detectable instead of invisible.
+
+**Fail-closed is enforced in code, not convention.** `pipeline.ts` wraps each `inspect()` call in try/catch and returns `require_approval` on throw, with a logged `confirm` event -- a failed inspector cannot be silently skipped, since skipping a layer is indistinguishable from a bypass. Every decision emits a structured `SecurityEvent` (block/confirm/alert/allow/injection/exfiltration) carrying inspector name, tool, target, reason, and finding ID. The Inspector/pipeline pattern is adapted from Goose's ToolInspectionManager.
 
 - **Status:** Active (v4.0)
 - **Location:** `PAI/DOCUMENTATION/Security/` (SYSTEM) + `PAI/USER/SECURITY/` (USER)
@@ -252,19 +256,19 @@ SecurityPipeline (PreToolUse: Bash, Write, Edit, MultiEdit) runs composable insp
 
 ### Notification System
 
-**Voice and push notifications for workflows and task execution.**
+**Desktop and push notifications for workflows and task execution.**
 
-Voice feedback via ElevenLabs TTS when workflows start and complete. Context-aware announcements match the user's request style (questions get "Checking...", commands get "Creating..."). Fire-and-forget design -- notifications never block execution. Missing services do not cause errors. Voice is served by the unified Pulse daemon as `modules/voice.ts` -- the `/notify` endpoint lives at `localhost:31337`.
+Desktop notifications (macOS, via `osascript`) fire when workflows start and complete. Text-to-speech was removed 2026-08-08 — ElevenLabs integration is gone with no replacement provider; `/notify` remains the general notification and progress ingestion endpoint, now delivering a desktop notification and nothing more. Fire-and-forget design -- notifications never block execution. Missing services do not cause errors. Served by the unified Pulse daemon as `PULSE/Notify.ts` -- the `/notify` endpoint lives at `localhost:31337`.
 
 - **Status:** Active
-- **Location:**  (voice module inside unified Pulse daemon)
+- **Location:** `PULSE/Notify.ts` (module inside unified Pulse daemon)
 - **Full doc:** `PAI/DOCUMENTATION/Notifications/NotificationSystem.md`
 
 ### Observability System
 
 **Single-source, multi-destination event pipeline for system visibility.**
 
-JSONL sources on local disk (tool-activity, tool-failures, voice-events, subagent-events) are collected, merged, and fanned out to configured targets (Cloudflare KV, local HTTP server). Frontend polls `/api/events/recent` every 3s. The observability HTTP server runs as a Pulse module (`Observability/observability.ts`) -- PAI Observatory dashboard at `localhost:31337` provides real-time visibility into agent activity, sessions, and system health.
+JSONL sources on local disk (tool-activity, tool-failures, subagent-events) are collected, merged, and fanned out to configured targets (Cloudflare KV, local HTTP server). Frontend polls `/api/events/recent` every 3s. The observability HTTP server runs as a Pulse module (`Observability/observability.ts`) -- PAI Observatory dashboard at `localhost:31337` provides real-time visibility into agent activity, sessions, and system health.
 
 - **Status:** Active
 - **Location:** `PAI/PULSE/Observability/observability.ts` (server module inside unified Pulse daemon)
@@ -278,9 +282,9 @@ JSONL sources on local disk (tool-activity, tool-failures, voice-events, subagen
 
 **Pulse is the Life Dashboard — the visible surface of the PAI Life Operating System.**
 
-PAI is the OS. Pulse is the Dashboard. Everything a human (or the DA) can *see* or *hear* about the Life OS flows through Pulse: real-time observability, voice notifications, chat surfaces (iMessage/Telegram), scheduled work, background worker state, DA heartbeat, and (as the dashboard grows) live views of current state vs ideal state, goal progress, workflows, and day-in-the-life preview. If a Life OS with no dashboard would still be a Life OS, and a dashboard with no OS behind it would be a widget — Pulse is what keeps the OS visible and interactive.
+PAI is the OS. Pulse is the Dashboard. Everything a human (or the DA) can *see* about the Life OS flows through Pulse: real-time observability, desktop notifications, chat surfaces (iMessage/Telegram), scheduled work, background worker state, DA heartbeat, and (as the dashboard grows) live views of current state vs ideal state, goal progress, workflows, and day-in-the-life preview. If a Life OS with no dashboard would still be a Life OS, and a dashboard with no OS behind it would be a widget — Pulse is what keeps the OS visible and interactive.
 
-**Implementation:** A single Bun process managed by launchd (`com.pai.pulse`), listening on port 31337. Pulse absorbed all previously separate daemon services into a module architecture: voice notifications (`modules/voice.ts`), observability server (`Observability/observability.ts`), Telegram bot (`modules/telegram.ts`), iMessage bot (`modules/imessage.ts`), and session hooks (`modules/hooks.ts`). Reads job definitions from PULSE.toml, evaluates cron schedules, executes due jobs (shell scripts or Claude CLI invocations), and routes output through existing notification channels. Circuit breaker pattern: 3 consecutive failures skip the job.
+**Implementation:** A single Bun process managed by launchd (`com.pai.pulse`), listening on port 31337. Pulse absorbed all previously separate daemon services into a module architecture: notifications (`Notify.ts`), observability server (`Observability/observability.ts`), Telegram bot (`modules/telegram.ts`), iMessage bot (`modules/imessage.ts`), and session hooks (`modules/hooks.ts`). Reads job definitions from PULSE.toml, evaluates cron schedules, executes due jobs (shell scripts or Claude CLI invocations), and routes output through existing notification channels. Circuit breaker pattern: 3 consecutive failures skip the job.
 
 - **Version:** 2.0
 - **Location:** `~/.claude/PAI/PULSE/`
@@ -436,7 +440,7 @@ System file inventory by pipeline. When you modify a file, trace its pipeline to
 
 | Pipeline | Key Files |
 |----------|-----------|
-| **Security** | `hooks/SecurityPipeline.hook.ts`, `hooks/security/pipeline.ts`, `hooks/security/inspectors/{Pattern,Egress,Rules,Prompt,Injection}Inspector.ts`, `USER/SECURITY/PATTERNS.yaml` |
+| **Security** | `hooks/SecurityPipeline.hook.ts` (PreToolUse), `hooks/ContentScanner.hook.ts` (PostToolUse), `hooks/PromptGuard.hook.ts` (UserPromptSubmit), `hooks/SmartApprover.hook.ts` (PermissionRequest), `hooks/CanarySession.hook.ts` + `hooks/HookCanary.hook.ts` (SessionStart), `hooks/security/{pipeline,types,logger}.ts`, `hooks/security/inspectors/{Canary,Pattern,Egress,Rules,Prompt,Injection}Inspector.ts`, `USER/SECURITY/PATTERNS.yaml` |
 | **Algorithm** | `Algorithm/LATEST` → `Algorithm/v{VERSION}.md` (currently v7.1.1), `Algorithm/capabilities.md`, `Algorithm/mode-detection.md`, `hooks/ISASync.hook.ts` → `MEMORY/WORK/{slug}/ISA.md`, `skills/ISA/` (canonical Scaffold/Append/Reconcile workflows) |
 | **Memory** | `hooks/WorkCompletionLearning.hook.ts`, `hooks/SatisfactionCapture.hook.ts`, `hooks/RelationshipMemory.hook.ts`, `Tools/KnowledgeHarvester.ts` → `MEMORY/KNOWLEDGE/`, `MEMORY/LEARNING/`; `Tools/SessionHarvester.ts --mine` → `KNOWLEDGE/_harvest-queue/`; `Tools/MemoryRetriever.ts` (BM25 retrieval), `Tools/KnowledgeGraph.ts` (graph navigation) — read-only |
 | **Hooks** | `hooks/*.hook.ts`, `hooks/handlers/*.ts`, `hooks/lib/*.ts`, `settings.json` |
@@ -444,7 +448,7 @@ System file inventory by pipeline. When you modify a file, trace its pipeline to
 | **Pulse** | `Pulse/pulse.ts` (port 31337), `Pulse/modules/{observability,hooks,wiki,imessage,telegram,user-index,da}.ts`, `Pulse/PULSE.toml`, `Pulse/Observability/src/`, `Pulse/Assistant/module.ts` |
 | **Skills** | `skills/*/SKILL.md`, `skills/*/Workflows/*.md`, `skills/*/Tools/*.ts`, `USER/SKILLCUSTOMIZATIONS/` |
 | **Config** | `settings.json`, `CLAUDE.md` (directly edited) → release tooling clones the live tree, deletes private zones, overlays public templates + USER scaffold into staging, runs gates |
-| **Notifications** | `Pulse/pulse.ts` voice handler → ElevenLabs API → `MEMORY/VOICE/voice-events.jsonl` |
+| **Notifications** | `Pulse/pulse.ts` → `Pulse/Notify.ts` (`/notify` — desktop notification, no TTS since 2026-08-08) |
 | **Doc Integrity** | `hooks/DocIntegrity.hook.ts` (Stop) → `hooks/handlers/DocCrossRefIntegrity.ts` + `hooks/handlers/RebuildArchSummary.ts` → `Tools/ArchitectureSummaryGenerator.ts` |
 
 ## System Self-Management

@@ -66,6 +66,12 @@ ENDPOINTS = {
         "model": "glm-5.2",
         "passage_key": "api/glm",
     },
+    "glm53": {
+        "name": "Z.ai GLM-5.3 (2026-08-14 release — thinking cannot be disabled per devpack docs, unverified over Anthropic-compat)",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "model": "glm-5.3",
+        "passage_key": "api/glm",
+    },
     "m3": {
         "name": "MiniMax M3 (512K)",
         "url": "https://api.minimax.io/anthropic/v1/messages",
@@ -267,6 +273,13 @@ def call_api(target_key: str, prompt: str, tools=None, max_tokens: int = 512) ->
     # Fable 5: effort via output_config. Thinking is always-on, no temperature/top_p.
     if cfg["model"] == "claude-fable-5":
         payload["output_config"] = {"effort": _effort_level()}
+    # GLM-5.3 (confirmed 2026-08-16): thinking can no longer be disabled — omitting the
+    # block returns HTTP 400 code 1210. budget_tokens must leave headroom beyond max_tokens
+    # or the whole response gets consumed by the thinking trace (observed: max_tokens=100
+    # entirely eaten by thinking, stop_reason=max_tokens, zero answer text returned).
+    if cfg["model"] == "glm-5.3":
+        payload["thinking"] = {"type": "enabled", "budget_tokens": 2048}
+        payload["max_tokens"] = max_tokens + 2048
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(

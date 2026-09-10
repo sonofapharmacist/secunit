@@ -77,6 +77,12 @@ ENDPOINTS = {
         "model": "glm-5.2", "passage_key": "api/glm",
         "max_tokens": 4096, "is_reasoning": False,
     },
+    "glm53": {
+        "name": "Z.ai GLM-5.3 (2026-08-14 — thinking cannot be disabled, confirmed 2026-08-16)", "fmt": "anthropic",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "model": "glm-5.3", "passage_key": "api/glm",
+        "max_tokens": 4096, "is_reasoning": True,
+    },
     # NVIDIA NIM OpenAI-compat
     "gpt_oss_120b": {
         "name": "OpenAI GPT-OSS-120B (NIM reasoning)", "fmt": "openai",
@@ -144,6 +150,20 @@ ENDPOINTS = {
         "max_tokens": 16000, "is_reasoning": True,
         "extra_payload": {"reasoning": {"effort": "low"}},
     },
+    "or_glm53_flash": {
+        "name": "Z.ai GLM 5.3 Flash (OpenRouter, reasoning:low)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "z-ai/glm-5.3-flash", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
+    "or_glm53": {
+        "name": "Z.ai GLM 5.3 (regular, OpenRouter, reasoning:low)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "z-ai/glm-5.3", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
     "or_hy3": {
         "name": "Tencent Hy3 (OpenRouter 65% off, reasoning:none)", "fmt": "openai",
         "url": "https://openrouter.ai/api/v1/chat/completions",
@@ -178,6 +198,23 @@ ENDPOINTS = {
         "model": "poolside/laguna-s-2.1:free", "passage_key": "api/openrouter",
         "max_tokens": 16000, "is_reasoning": True,
         "extra_payload": {"reasoning": {"effort": "none"}},
+    },
+    "or_qwen38_max": {
+        "name": "Qwen3.8-Max (2.4T/95B MoE, OpenRouter, reasoning:low — cannot disable)", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "qwen/qwen3.8-max", "passage_key": "api/openrouter",
+        "max_tokens": 16000, "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
+    "or_deepseek_v4_pro_0813": {
+        "name": "DeepSeek V4 Pro 0813 (1.7T MoE, OpenRouter, GA release, reasoning:low — no 'medium')", "fmt": "openai",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "deepseek/deepseek-v4-pro-0813", "passage_key": "api/openrouter",
+        # 2000-4000 per-test max_tokens (TESTS tuple) starved this model's reasoning
+        # trace on 5/7 tasks (content_null, finish_reason:length) even at reasoning:low.
+        # force_endpoint_max_tokens overrides the per-test value with this ceiling.
+        "max_tokens": 32000, "is_reasoning": True, "force_endpoint_max_tokens": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
     },
     "or_m3": {
         "name": "MiniMax M3 (OpenRouter 60% off — re-confirmation)", "fmt": "openai",
@@ -277,6 +314,11 @@ ENDPOINTS = {
         "name": "Gemini 3.5 Flash-Lite", "fmt": "gemini",
         "model": "gemini-3.5-flash-lite", "passage_key": "api/gemini",
         "max_tokens": 4096, "is_reasoning": False, "sleep": 0,
+    },
+    "flash_37": {
+        "name": "Gemini 3.7 Flash", "fmt": "gemini",
+        "model": "gemini-3.7-flash", "passage_key": "api/gemini",
+        "max_tokens": 4096, "is_reasoning": True, "sleep": 0.5,
     },
     # OpenAI native
     "gpt55": {
@@ -403,6 +445,13 @@ def call_anthropic(cfg, prompt, max_tokens=None):
     # Fable 5: effort via output_config. No temperature / thinking param.
     if cfg["model"] == "claude-fable-5":
         payload["output_config"] = {"effort": _effort_level()}
+    # GLM-5.3 (confirmed 2026-08-16): thinking can no longer be disabled — omitting the
+    # block returns HTTP 400 code 1210. budget_tokens must leave headroom beyond max_tokens
+    # or the whole response gets consumed by the thinking trace (max_tokens=100 fully eaten
+    # by thinking with zero answer text returned, in the plain T-battery probe).
+    if cfg["model"] == "glm-5.3":
+        payload["thinking"] = {"type": "enabled", "budget_tokens": 4096}
+        payload["max_tokens"] = payload["max_tokens"] + 4096
     data = json.dumps(payload).encode()
     req = urllib.request.Request(cfg["url"], data=data, headers={
         "x-api-key": api_key,
@@ -435,9 +484,19 @@ def call_openai(cfg, prompt, max_tokens=None):
     is_openai_native = "api.openai.com" in cfg["url"]
     token_field = "max_completion_tokens" if is_openai_native else "max_tokens"
     is_labs = cfg.get("model", "").startswith("labs-")
+    # Per-test max_tokens (2000-4000, tuned for chat models) starves reasoning
+    # models whose thinking trace alone can exceed that budget before any answer
+    # text is emitted (content_null). Opt in per-endpoint via cfg["force_endpoint_max_tokens"]
+    # rather than flipping this for every is_reasoning model — several (GPT-OSS-120B,
+    # Kimi-K2.6, Step-3.7-Flash) are already unified-bench-verified against the
+    # current per-test-wins behavior and shouldn't silently change.
+    if cfg.get("force_endpoint_max_tokens"):
+        effective_max_tokens = cfg["max_tokens"]
+    else:
+        effective_max_tokens = max_tokens or cfg["max_tokens"]
     payload = {
         "model": cfg["model"],
-        token_field: max_tokens or cfg["max_tokens"],
+        token_field: effective_max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     if is_labs:
@@ -523,7 +582,7 @@ def call_cohere(cfg, prompt, max_tokens=None):
 # Generation confirmed 2026-07-22: 3.6 Flash / 3.5 Flash-Lite reject thinkingBudget:0 with
 # HTTP 400 INVALID_ARGUMENT (budget -1 and omitting the field both work) — thinking can no
 # longer be fully disabled on these models. Older Flash variants accept budget 0 fine.
-GEMINI_NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite"}
+GEMINI_NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.7-flash"}
 
 # 3.6 Flash specifically: even at thinkingBudget:1 (the minimum legal value), thoughtsTokenCount
 # ranged 6-2188 in spot checks (C4 test-gen prompt hit 2188, well above the original 1024 floor)
@@ -532,7 +591,7 @@ GEMINI_NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite"}
 # 3.5 Flash-Lite showed no such overhead with thinkingConfig omitted entirely (scored 46/53
 # clean), so it's not given this treatment. Overhead is additive to the requested budget, not
 # a flat floor — must pad max_tok by the reserve, not max() against it.
-GEMINI_ALWAYS_THINKS_MODELS = {"gemini-3.6-flash"}
+GEMINI_ALWAYS_THINKS_MODELS = {"gemini-3.6-flash", "gemini-3.7-flash"}
 GEMINI_THINKING_OVERHEAD_RESERVE = 3000
 
 def call_gemini(cfg, prompt, max_tokens=None):

@@ -15,7 +15,12 @@ type FinalInput = { verdict: "success" | "error" | "timeout"; exitCode: number |
 const PULSE_TIMEOUT_MS = 2000;
 const HTTP_ERROR_BODY_TIMEOUT_MS = 2000;
 function parseArgs(argv: string[]): Args {
-  const args: Partial<Args> = { model: "kimi-k2.6", timeoutMs: 300000, pulseUrl: "http://localhost:31337/notify", temperature: 1, maxTokens: 16000 };
+  // Default is LongCat 2.0 (2026-08-08): threat-model 9.28/10 PAI 3/3 ties Opus 4.8,
+  // cheaper+faster than Kimi K2.6 ($0.073/126s vs $0.103/180s). Meituan model, not
+  // Moonshot-native — served via OpenRouter, see postMoonshot's base-URL selection.
+  // Kimi K2.6 stays available via --model kimi-k2.6 (routes to Moonshot direct).
+  // ADR: PAI/DOCUMENTATION/Decisions/threat-model-tier-0-routing.md
+  const args: Partial<Args> = { model: "meituan/longcat-2.0", timeoutMs: 300000, pulseUrl: "http://localhost:31337/notify", temperature: 1, maxTokens: 16000 };
   const seen = new Set<string>();
   const valueFor = (flag: string, inline: string | undefined, index: number): [string, number] => {
     if (inline !== undefined) return [inline, index];
@@ -76,7 +81,16 @@ async function readPrompt(prompt: string | undefined): Promise<string> {
   for await (const chunk of stdin) text += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
   return text;
 }
-async function readMoonshotApiKey(home: string): Promise<string | null> {
+async function readMoonshotApiKey(home: string, isMoonshotNative: boolean): Promise<string | null> {
+  // Non-Moonshot-native models (e.g. LongCat 2.0) default to OpenRouter — prefer
+  // OPENROUTER_API_KEY for them so a stray MOONSHOT_API_KEY (left over from Kimi
+  // usage) doesn't get sent to OpenRouter as the wrong credential and 401.
+  if (!isMoonshotNative) {
+    const orKey = process.env.OPENROUTER_API_KEY;
+    if (typeof orKey === "string" && orKey.trim().length > 0) return orKey.trim();
+    const fallbackKey = process.env.MOONSHOT_API_KEY;
+    return typeof fallbackKey === "string" && fallbackKey.trim().length > 0 ? fallbackKey.trim() : null;
+  }
   const envKey = process.env.MOONSHOT_API_KEY;
   if (typeof envKey === "string" && envKey.trim().length > 0) return envKey.trim();
   try { return parseMoonshotApiKey(await readFile(join(home, ".claude", ".env"), "utf8")); } // Local env read is intentionally unbounded.
@@ -137,7 +151,7 @@ function startProgressPoller(accumulated: () => string, args: Args): () => void 
   let lastMessage = "", cleaned = false;
   const timer = setInterval(() => {
     try {
-      const message = `[kimi-stream] ${tailCollapsed(accumulated(), 120)}`;
+      const message = `[anvil-stream] ${tailCollapsed(accumulated(), 120)}`;
       if (message === lastMessage) return;
       lastMessage = message;
       void sendNotify(args.pulseUrl, { message, voice_enabled: false, agent: "Anvil", slug: args.slug, phase: "ANVIL" });
@@ -148,7 +162,7 @@ function startProgressPoller(accumulated: () => string, args: Args): () => void 
 function wireTimeout(controller: AbortController, state: RunState, args: Args): TimeoutControl {
   const timer = setTimeout(() => {
     state.timedOut = true; controller.abort();
-    void sendNotify(args.pulseUrl, { message: `Anvil: Moonshot timed out after ${args.timeoutMs}ms`, voice_enabled: false, agent: "Anvil", slug: args.slug, phase: "ANVIL" });
+    void sendNotify(args.pulseUrl, { message: `Anvil: ${args.model} timed out after ${args.timeoutMs}ms`, voice_enabled: false, agent: "Anvil", slug: args.slug, phase: "ANVIL" });
   }, args.timeoutMs);
   return { clear: () => clearTimeout(timer) };
 }
@@ -162,8 +176,13 @@ function wireSignals(controller: AbortController, state: RunState, timeoutContro
   return { clear: () => { process.off("SIGINT", handler); process.off("SIGTERM", handler); } };
 }
 async function postMoonshot(apiKey: string, args: Args, prompt: string, signal: AbortSignal): Promise<Response> {
-  const baseUrl = (process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1").replace(/\/$/, "");
-  const excludeReasoning = process.env.MOONSHOT_BASE_URL !== undefined;
+  // LongCat 2.0 (meituan/longcat-2.0) is not Moonshot-native — it has no
+  // api.moonshot.ai home, only an OpenRouter route. Kimi models (kimi-*)
+  // stay on Moonshot direct unless MOONSHOT_BASE_URL is explicitly set.
+  const isMoonshotNative = args.model.startsWith("kimi-");
+  const defaultBaseUrl = isMoonshotNative ? "https://api.moonshot.ai/v1" : "https://openrouter.ai/api/v1";
+  const baseUrl = (process.env.MOONSHOT_BASE_URL ?? defaultBaseUrl).replace(/\/$/, "");
+  const excludeReasoning = process.env.MOONSHOT_BASE_URL !== undefined || !isMoonshotNative;
   const body: JsonRecord = { model: args.model, messages: [{ role: "user", content: prompt }], stream: true, temperature: args.temperature, max_tokens: args.maxTokens, ...(excludeReasoning ? { reasoning: { exclude: true } } : {}) };
   return await fetch(`${baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
 }
@@ -289,8 +308,12 @@ export default async function main(argv: string[]): Promise<number> {
   const startMs = Date.now();
   let paths: Paths | null = null, finalMessage = "";
   try {
-    const args = parseArgs(argv), home = homeDir(), apiKey = await readMoonshotApiKey(home);
-    if (!apiKey) { process.stdout.write('{"verdict":"unavailable","reason":"MOONSHOT_API_KEY not set"}\n'); return 2; }
+    const args = parseArgs(argv), home = homeDir(), isMoonshotNative = args.model.startsWith("kimi-");
+    const apiKey = await readMoonshotApiKey(home, isMoonshotNative);
+    if (!apiKey) {
+      const reason = isMoonshotNative ? "MOONSHOT_API_KEY not set" : "OPENROUTER_API_KEY (or MOONSHOT_API_KEY) not set";
+      process.stdout.write(`{"verdict":"unavailable","reason":"${reason}"}\n`); return 2;
+    }
     paths = await ensureSlugDir(home, args.slug);
     const prompt = await readPrompt(args.prompt);
     if (prompt.length === 0) throw new Error("no prompt provided; pass --prompt or pipe stdin data");

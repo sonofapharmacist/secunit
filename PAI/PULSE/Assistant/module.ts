@@ -184,7 +184,6 @@ function buildPersonality() {
         "Varied rhythm — short punches mixed with longer explanations",
       ],
     },
-    voice: { provider: "elevenlabs" },
   }
 }
 
@@ -294,7 +293,7 @@ export async function handleAssistantRequest(req: Request, pathname: string): Pr
       created_by: (daConfig.primary as string) ?? "munro",
       description: (body.description as string) ?? "Untitled task",
       schedule: (body.schedule as ScheduledTask["schedule"]) ?? { type: "once" },
-      action: (body.action as ScheduledTask["action"]) ?? { type: "notify", channel: "voice" },
+      action: (body.action as ScheduledTask["action"]) ?? { type: "notify", channel: "log" },
       status: "active",
       fire_count: 0,
       tags: [],

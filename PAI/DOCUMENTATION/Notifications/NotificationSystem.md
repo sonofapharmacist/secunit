@@ -1,12 +1,37 @@
 # The Notification System
 
-**Voice notifications for PAI workflows and task execution.**
+**Desktop and push notifications for PAI workflows and task execution.**
 
-> **Infrastructure:** The voice notification endpoint (`http://localhost:31337/notify`) is served by the unified Pulse daemon (`~/.claude/PAI/PULSE/`). Voice is implemented at `~/.claude/PAI/PULSE/VoiceServer/voice.ts` and routed through Pulse -- there is no separate VoiceServer process. One daemon, one port, one launchd plist (`com.pai.pulse`).
+> **Infrastructure:** The notification endpoint (`http://localhost:31337/notify`) is served by the unified Pulse daemon (`~/.claude/PAI/PULSE/`). It is implemented at `~/.claude/PAI/PULSE/Notify.ts` and routed through Pulse -- there is no separate notification process. One daemon, one port, one launchd plist (`com.pai.pulse`).
+
+> **Text-to-speech was removed on 2026-08-08.** PAI previously synthesized spoken audio through ElevenLabs. That integration -- the API key, voice IDs, prosody and `voice_settings` tuning, and audio playback -- is gone with no replacement provider. `/notify` remains the general notification and progress ingestion endpoint; it now delivers a desktop notification and nothing more. Requests that still carry `voice_id`, `voice_enabled`, or `voice_settings` fields are accepted and ignored, so existing callers keep working unchanged.
 
 This system provides:
-- Voice feedback when workflows start
+- Desktop notification feedback when workflows start
 - Consistent user experience across all skills
+
+---
+
+## What `/notify` Does
+
+`Notify.ts` exports `handleNotifyRequest()`; it does not run its own HTTP server. The parent `pulse.ts` imports it as `notifyModule`, calls `startNotify({ enabled: true })` at boot, and exposes `notifyHealth()` in the health subsystem list.
+
+| Route | Method | Behavior |
+|-------|--------|----------|
+| `/notify` | POST | Main endpoint. Reads `title` (default `"PAI Notification"`) and `message` (default `"Task completed"`), then sends a desktop notification. |
+| `/notify/personality` | POST | Compatibility shim for legacy callers. Sends the notification under the title `"PAI Notification"`. |
+| `/voice` | POST | Legacy path alias, kept so existing callers do not need updating. Default title `"PAI Assistant"`. No audio despite the name. |
+| `/notify/health` | GET | Returns `initialized`, `enabled`, and `desktop_notifications`. |
+
+On the way through, every request gets:
+
+1. **Input sanitization** -- message text is cleaned and escaped before it reaches AppleScript
+2. **Rate limiting** -- 10 requests per 60-second window per client IP; over the limit returns HTTP 429
+3. **Desktop notification** -- macOS native, via `osascript`
+
+Success responses are `{"status": "success", "message": "..."}`. Failures return `{"status": "error", "message": "..."}` with 400 for invalid input and 500 otherwise.
+
+**What it does not do:** text-to-speech synthesis, ElevenLabs API calls, audio playback, or voice ID resolution.
 
 ---
 
@@ -14,7 +39,7 @@ This system provides:
 
 **When STARTING a task, do BOTH:**
 
-1. **Send voice notification**:
+1. **Send notification**:
    ```bash
    curl -s -X POST http://localhost:31337/notify \
      -H "Content-Type: application/json" \
@@ -27,7 +52,7 @@ This system provides:
    [Doing what {PRINCIPAL.NAME} asked]...
    ```
 
-**Skip curl for conversational responses** (greetings, acknowledgments, simple Q&A). The 🎯 COMPLETED line already drives voice output—adding curl creates redundant voice messages.
+**Skip curl for conversational responses** (greetings, acknowledgments, simple Q&A).
 
 ---
 
@@ -74,45 +99,15 @@ When executing an actual workflow file from a `Workflows/` directory:
 ```bash
 curl -s -X POST http://localhost:31337/notify \
   -H "Content-Type: application/json" \
-  -d '{"message": "Running the WORKFLOWNAME workflow in the SKILLNAME skill to ACTION", "voice_id": "{DA_IDENTITY.VOICEID}", "title": "{DA_IDENTITY.NAME}"}' \
+  -d '{"message": "Running the WORKFLOWNAME workflow in the SKILLNAME skill to ACTION", "title": "{DA_IDENTITY.NAME}"}' \
   > /dev/null 2>&1 &
 ```
 
 **Parameters:**
-- `message` - The spoken text (workflow and skill name)
-- `voice_id` - ElevenLabs voice ID (default: {DA_IDENTITY.NAME}'s voice)
+- `message` - The notification text (workflow and skill name)
 - `title` - Display name for the notification
-- `phase` (optional, 2026-04-16+) - Uppercase Algorithm phase (`OBSERVE`, `THINK`, `PLAN`, `BUILD`, `EXECUTE`, `VERIFY`, `LEARN`, `COMPLETE`). When present, triggers dual-source phase tracking — the endpoint (a) appends a `phaseHistory` entry with `source: "voice"`, (b) updates top-level `session.phase` (lowercase), and (c) calls `setPhaseTab(phase, sessionUUID)` to update the terminal tab icon/color. All three fire together so the UI never goes stale between ISA edits.
-- `slug` (optional, 2026-04-16+) - The ISA session slug. Used to route the phase write to the correct session. When absent, falls back to most-recently-updated non-complete session within 2-hour window.
 
-**Dual-source phase tracking:** `/notify` is the first-fires/always-fires signal for Algorithm phase transitions. ISASync hook is the rich-but-sometimes-skipped signal from ISA frontmatter edits. Both feed `phaseHistory` via `hooks/lib/isa-utils.ts::appendPhase()` — same phase + different source = upgrade to `source: "merged"`. **Both also write top-level `session.phase` and call `setPhaseTab()`** (voice did this starting 2026-04-18; ISASync already did). See `PAI/MEMORY/KNOWLEDGE/Ideas/dual-source-event-tracking-pattern.md` and `feedback_voice_must_update_top_level_phase.md`.
-
----
-
-## Effort Level in Voice Notifications
-
-**Voice phase announcements are inline curls in the Algorithm template** (defined in CLAUDE.md), not hooks. Each Algorithm phase has a `curl -s -X POST http://localhost:31337/notify` call that gets spoken. The effort level determines which curls fire:
-
-| Effort | Budget | Voice Curls |
-|--------|--------|-------------|
-| Standard | <2min | OBSERVE + VERIFY curls only |
-| Extended | <8min | All phase curls |
-| Advanced | <16min | All phase curls |
-| Deep | <32min | All phase curls |
-| Comprehensive | <120min | All phase curls |
-
-**Task completion voice** is handled by `VoiceCompletion.hook.ts` → `handlers/VoiceNotification.ts`, which extracts the `🗣️` line from the response and POSTs to the Pulse `/notify` endpoint at `http://localhost:31337`.
-
----
-
-## Voice IDs
-
-| Agent | Voice ID | Notes |
-|-------|----------|-------|
-| **{DA_IDENTITY.NAME}** (default) | `{DA_IDENTITY.VOICEID}` | Use for most workflows |
-| **Priya** (Artist) | `ZF6FPAbjXT4488VcRRnw` | Art skill workflows |
-
-**Full voice registry:** `~/.claude/skills/Agents/SKILL.md` (see Named Agents) and `~/.claude/settings.json` (daidentity.voices.main.voiceId)
+Legacy `voice_id`, `voice_enabled`, and `voice_settings` fields are ignored if present.
 
 ---
 
@@ -123,11 +118,11 @@ curl -s -X POST http://localhost:31337/notify \
 For skills that have a `Workflows/` directory:
 
 ```markdown
-## Voice Notification
+## Workflow Notification
 
 **When executing a workflow, do BOTH:**
 
-1. **Send voice notification**:
+1. **Send notification**:
    ```bash
    curl -s -X POST http://localhost:31337/notify \
      -H "Content-Type: application/json" \
@@ -145,7 +140,7 @@ Replace `WORKFLOWNAME`, `SKILLNAME`, and `ACTION` with actual values when execut
 
 ### Template B: Skills WITHOUT Workflows
 
-For skills that handle requests directly (no `Workflows/` directory), **do NOT include a Voice Notification section**. These skills just describe what they're doing naturally in their responses.
+For skills that handle requests directly (no `Workflows/` directory), **do NOT include a notification section**. These skills just describe what they're doing naturally in their responses.
 
 If you need to indicate this explicitly:
 
@@ -186,7 +181,7 @@ The backgrounded `&` and redirected output (`> /dev/null 2>&1`) ensure the curl 
 
 ## External Notifications (Push, Discord)
 
-**Beyond voice notifications, PAI supports external notification channels:**
+**Beyond desktop notifications, PAI supports external notification channels:**
 
 ### Available Channels
 
@@ -202,11 +197,11 @@ Notifications are automatically routed based on event type:
 
 | Event | Default Channels | Trigger |
 |-------|------------------|---------|
-| `taskComplete` | Voice only | Normal task completion |
-| `longTask` | Voice + ntfy | Task duration > 5 minutes |
+| `taskComplete` | Desktop only | Normal task completion |
+| `longTask` | Desktop + ntfy | Task duration > 5 minutes |
 | `backgroundAgent` | ntfy | Background agent completes |
-| `error` | Voice + ntfy | Error in response |
-| `security` | Voice + ntfy + Discord | Security alert |
+| `error` | Desktop + ntfy | Error in response |
+| `security` | Desktop + ntfy + Discord | Security alert |
 
 ### Configuration
 

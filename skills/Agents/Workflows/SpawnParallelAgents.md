@@ -13,7 +13,7 @@
 
 **KEY: No "custom" keyword = simple parallel workers for grunt work (fast execution)**
 
-**NOT the same as custom agents** - for unique personalities/voices/colors, use the CreateCustomAgent workflow.
+**NOT the same as custom agents** - for unique personalities/colors, use the CreateCustomAgent workflow.
 
 ## The Workflow
 
@@ -351,20 +351,12 @@ Task({ ..., model: "haiku" })
 Task({ ..., model: "haiku" })
 ```
 
-## Voice Output
-
-## Voice Output
-
-For grunt work, voice output is optional. If enabled, all parallel agents use the default voice configuration.
-
-This is intentional - for parallel grunt work, we prioritize speed over personality diversity. **For unique voices and identities, use the CreateCustomAgent workflow instead.**
-
 ## When to Use Custom Agents Instead
 
 Use **CreateCustomAgent workflow** when:
 - User says "custom agents" (the key trigger)
 - You need distinct personalities/perspectives
-- Voice and color diversity matters
+- Color diversity matters
 - Different analytical approaches required
 - Each agent brings unique expertise
 
@@ -376,9 +368,5 @@ Use **SpawnParallelAgents workflow** when:
 
 ## Related Workflows
 
-- **CreateCustomAgent** - For agents with unique personalities, voices, and colors
+- **CreateCustomAgent** - For agents with unique personalities and colors
 - **ListTraits** - Show available traits for custom agents
-
-## References
-
-- Agent personalities: `~/.claude/skills/Agents/AgentPersonalities.md`

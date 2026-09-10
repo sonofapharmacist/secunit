@@ -3,7 +3,10 @@
  * CrossVendorAudit.ts — Cato's audit tool
  *
  * Bundles ISA + artifacts + tool-activity tail + Advisor verdict, pipes to
- * codex exec (GPT-5.4 read-only), parses JSON response, appends to
+ * codex exec (GPT-5.5 read-only — gpt-5.4 was removed from the ChatGPT-account
+ * model manifest at some point after 2026-06-17, confirmed absent via a live
+ * `codex exec --model gpt-5.4` HTTP 400 on 2026-08-08; gpt-5.5 is the only
+ * frontier slug currently served), parses JSON response, appends to
  * MEMORY/VERIFICATION/cato-findings.jsonl, emits parsed JSON to stdout.
  *
  * Usage:
@@ -41,13 +44,15 @@ Audit this ISA against its ISC criteria. For each criterion:
 
 Signal over noise. If the Advisor was right and there is nothing to flag, say so explicitly with "agrees_with_advisor": "yes" and "findings": []. Do not manufacture concerns. Your credibility depends on surfacing real Anthropic-family blind spots, not on inflating finding counts.
 
-Output ONLY this JSON on one line, no markdown, no prose, no preamble:
+Output ONLY this JSON on one line, no markdown, no prose, no preamble. Set "model_used" to your own actual model identifier (whatever you would call yourself if asked directly) — do not copy the placeholder value below verbatim, it exists only to show the field's shape:
 
-{"verdict":"pass|concerns|fail","criticality":"high|medium|low","findings":[{"severity":"critical|warning|info","isc_ref":"ISC-N or null","issue":"...","evidence":"..."}],"blind_spots_surfaced":["..."],"agrees_with_advisor":"yes|no|partial","model_used":"gpt-5.4","tokens_used":0}`;
+{"verdict":"pass|concerns|fail","criticality":"high|medium|low","findings":[{"severity":"critical|warning|info","isc_ref":"ISC-N or null","issue":"...","evidence":"..."}],"blind_spots_surfaced":["..."],"agrees_with_advisor":"yes|no|partial","model_used":"<your actual model name>","tokens_used":0}`;
 
 interface Args {
   slug: string;
   advisorVerdict: string;
+  fallbackModel: string;
+  noFallback: boolean;
 }
 
 interface CatoResponse {
@@ -60,13 +65,35 @@ interface CatoResponse {
   tokens_used?: number;
   cost_usd_est?: number;
   reason?: string;
+  audit_path?: "codex" | "openrouter-fallback";
+  openrouter_model_requested?: string;
+  fallback_reason?: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Partial<Args> = {};
+  const args: Partial<Args> = { fallbackModel: "openai/gpt-5.4", noFallback: false };
+  const seen = new Set<string>();
+  const valueFor = (flag: string, index: number): [string, number] => {
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+    return [value, index + 1];
+  };
   for (let i = 2; i < argv.length; i++) {
-    if (argv[i] === "--slug") args.slug = argv[++i];
-    else if (argv[i] === "--advisor-verdict") args.advisorVerdict = argv[++i];
+    const token = argv[i];
+    if (token === "--no-fallback") { if (seen.has(token)) throw new Error(`duplicate flag: ${token}`); seen.add(token); args.noFallback = true; continue; }
+    const eq = token.indexOf("="), flag = eq === -1 ? token : token.slice(0, eq);
+    if (seen.has(flag)) throw new Error(`duplicate flag: ${flag}`);
+    seen.add(flag);
+    let value: string;
+    let next: number;
+    if (eq !== -1) { value = token.slice(eq + 1); next = i; }
+    else { [value, next] = valueFor(token, i); i = next; }
+    switch (flag) {
+      case "--slug": args.slug = value; break;
+      case "--advisor-verdict": args.advisorVerdict = value; break;
+      case "--fallback-model": args.fallbackModel = value; break;
+      default: throw new Error(`unknown flag: ${token}`);
+    }
   }
   if (!args.slug) throw new Error("--slug required");
   if (!args.advisorVerdict) args.advisorVerdict = "(not provided)";
@@ -191,7 +218,7 @@ function invokeCodex(bundle: string): Promise<{ stdout: string; stderr: string; 
   return new Promise((resolvePromise) => {
     const proc = spawn(
       CODEX_BIN,
-      ["exec", "--sandbox", "read-only", "--model", "gpt-5.4", "-"],
+      ["exec", "--sandbox", "read-only", "--model", "gpt-5.5", "-"],
       { stdio: ["pipe", "pipe", "pipe"] }
     );
     let stdout = "";
@@ -210,6 +237,62 @@ function invokeCodex(bundle: string): Promise<{ stdout: string; stderr: string; 
     proc.stdin.write(bundle);
     proc.stdin.end();
   });
+}
+
+function invokeOpenRouterFallback(bundle: string, args: Args): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return new Promise((resolvePromise) => {
+    const orHelper = join(PAI_DIR, "TOOLS", "ForgeOpenRouter.ts");
+    const proc = spawn(
+      "bun",
+      [orHelper,
+        "--slug", args.slug,
+        "--model", args.fallbackModel,
+        "--timeout-ms", String(CODEX_TIMEOUT_MS),
+        "--max-tokens", "4000",
+        "--temperature", "0",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] }
+    );
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      proc.kill("SIGTERM");
+      resolvePromise({ stdout, stderr: stderr + "\n[TIMEOUT after 120s]", code: 124 });
+    }, CODEX_TIMEOUT_MS);
+
+    proc.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    proc.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      resolvePromise({ stdout, stderr, code });
+    });
+    proc.stdin.on("error", (_err: unknown) => { /* EPIPE if helper exited before we wrote; harmless — final line still parses */ });
+    proc.stdin.write(bundle);
+    proc.stdin.end();
+  });
+}
+
+function parseOpenRouterStdout(stdout: string, args: Args): CatoResponse {
+  // ForgeOpenRouter.ts emits a wrapper JSON; the actual Cato response lives in wrapper.final_message.
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) {
+    return { verdict: "skipped", reason: "openrouter fallback: empty stdout", audit_path: "openrouter-fallback", openrouter_model_requested: args.fallbackModel, fallback_reason: "no_output" };
+  }
+  let wrapper: { verdict?: string; final_message?: string; reason?: string } | null = null;
+  try { wrapper = JSON.parse(trimmed); } catch (_err: unknown) {
+    return { verdict: "skipped", reason: `openrouter fallback: unparseable wrapper (${trimmed.slice(0, 120)})`, audit_path: "openrouter-fallback", openrouter_model_requested: args.fallbackModel, fallback_reason: "parse_error" };
+  }
+  if (typeof wrapper?.final_message !== "string") {
+    return { verdict: "skipped", reason: `openrouter fallback: wrapper missing final_message (verdict=${wrapper?.verdict ?? "?"})`, audit_path: "openrouter-fallback", openrouter_model_requested: args.fallbackModel, fallback_reason: "missing_final_message" };
+  }
+  const inner = extractJSON(wrapper.final_message);
+  inner.audit_path = "openrouter-fallback";
+  inner.openrouter_model_requested = args.fallbackModel;
+  if (inner.verdict === "skipped" && inner.reason === "no JSON in codex output") {
+    // The model didn't return a parseable Cato response — record but keep audit_path so downstream knows.
+    inner.fallback_reason = inner.fallback_reason ?? "model_returned_unstructured";
+  }
+  return inner;
 }
 
 function extractJSON(rawStdout: string): CatoResponse {
@@ -245,6 +328,9 @@ async function appendFinding(slug: string, advisorVerdict: string, response: Cat
     cost_usd: response.cost_usd_est ?? estimateCost(response.tokens_used ?? 0),
     skipped: response.verdict === "skipped",
     reason: response.reason ?? null,
+    audit_path: response.audit_path ?? "codex",
+    openrouter_model_requested: response.openrouter_model_requested ?? null,
+    fallback_reason: response.fallback_reason ?? null,
   });
   await appendFile(FINDINGS_LOG, line + "\n", "utf8");
 }
@@ -259,12 +345,12 @@ async function main() {
   try {
     args = parseArgs(process.argv);
   } catch (err) {
-    console.error(JSON.stringify({ verdict: "error", reason: (err as Error).message }));
+    console.error(JSON.stringify({ verdict: "error", reason: (err as Error).message, audit_path: "codex" }));
     process.exit(2);
   }
 
   if (!existsSync(CODEX_BIN)) {
-    const resp = { verdict: "skipped" as const, reason: "codex CLI not installed" };
+    const resp = { verdict: "skipped" as const, reason: "codex CLI not installed", audit_path: "codex" as const };
     await appendFinding(args.slug, args.advisorVerdict, resp, "unknown");
     console.log(JSON.stringify(resp));
     process.exit(0);
@@ -274,7 +360,7 @@ async function main() {
   try {
     isa = await readISA(args.slug);
   } catch (err) {
-    const resp = { verdict: "error" as const, reason: (err as Error).message };
+    const resp = { verdict: "error" as const, reason: (err as Error).message, audit_path: "codex" as const };
     console.log(JSON.stringify(resp));
     process.exit(1);
   }
@@ -287,16 +373,30 @@ async function main() {
   const bundle = assembleBundle(isa, artifacts, toolTail, args.advisorVerdict);
 
   const { stdout, stderr, code } = await invokeCodex(bundle);
-  if (code === 124) {
-    const resp = { verdict: "skipped" as const, reason: "codex timeout at 120s" };
-    await appendFinding(args.slug, args.advisorVerdict, resp, tier);
-    console.log(JSON.stringify(resp));
-    return;
-  }
-  if (code !== 0) {
-    const resp = { verdict: "skipped" as const, reason: `codex exit ${code}: ${stderr.slice(0, 200)}` };
-    await appendFinding(args.slug, args.advisorVerdict, resp, tier);
-    console.log(JSON.stringify(resp));
+  if (code === 124 || code !== 0) {
+    if (args.noFallback) {
+      const reason = code === 124
+        ? "codex timeout at 120s"
+        : `codex exit ${code}: ${stderr.slice(0, 200)}`;
+      const resp = { verdict: "skipped" as const, reason, audit_path: "codex" as const };
+      await appendFinding(args.slug, args.advisorVerdict, resp, tier);
+      console.log(JSON.stringify(resp));
+      return;
+    }
+    // Cascade to OpenRouter. Same bundle, same prompt path. Stamps audit_path automatically.
+    const orResult = await invokeOpenRouterFallback(bundle, args);
+    if (orResult.code === 124 || orResult.code !== 0) {
+      const reason = orResult.code === 124
+        ? "openrouter fallback: timeout at 120s"
+        : `openrouter fallback: exit ${orResult.code}: ${orResult.stderr.slice(0, 200)}`;
+      const resp = { verdict: "skipped" as const, reason, audit_path: "openrouter-fallback" as const, openrouter_model_requested: args.fallbackModel, fallback_reason: orResult.code === 124 ? "timeout_120s" : `exit_${orResult.code ?? "null"}` };
+      await appendFinding(args.slug, args.advisorVerdict, resp, tier);
+      console.log(JSON.stringify(resp));
+      return;
+    }
+    const orResp = parseOpenRouterStdout(orResult.stdout, args);
+    await appendFinding(args.slug, args.advisorVerdict, orResp, tier);
+    console.log(JSON.stringify(orResp));
     return;
   }
 
@@ -304,6 +404,7 @@ async function main() {
   if (parsed.tokens_used && !parsed.cost_usd_est) {
     parsed.cost_usd_est = estimateCost(parsed.tokens_used);
   }
+  parsed.audit_path = "codex";
   await appendFinding(args.slug, args.advisorVerdict, parsed, tier);
   console.log(JSON.stringify(parsed));
 }

@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+thinkingCapQwen36_27b,llamacpp,2,7,16,12,35,53,1501.8,complete,,,0,0.0

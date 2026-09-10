@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+flash37,gemini,2,7,9,21,37,53,991.5,complete,,,0,0.0

@@ -60,6 +60,38 @@ function countSkills(): number {
   }
 }
 
+/**
+ * Mirror of PreCompact.hook.ts::resolveContextWindowSize().
+ * Kept local (not imported) to avoid a lib dependency for a 6-line helper.
+ *
+ * Priority:
+ *   1. CLAUDE_CODE_AUTO_COMPACT_WINDOW env var (set by PAI backend scripts)
+ *   2. ANTHROPIC_DEFAULT_*_MODEL slug walk
+ *   3. 1M default (current Anthropic-native standard)
+ */
+function resolveContextWindow(): number {
+  const envWindow = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  if (envWindow) {
+    const parsed = parseInt(envWindow, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  const candidates = [
+    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+    process.env.ANTHROPIC_SMALL_FAST_MODEL,
+  ].filter(Boolean) as string[];
+  for (const slug of candidates) {
+    const lower = slug.toLowerCase();
+    if (lower.includes('m3') || lower.includes('minimax')) return 512_000;
+    if (lower.includes('glm-5.3') || lower.includes('glm5.3') || lower.includes('glm-5.2') || lower.includes('glm5.2')) return 200_000;
+    if (lower.includes('glm-4.7') || lower.includes('glm4.7') || lower.includes('glm')) return 128_000;
+    if (lower.includes('haiku')) return 200_000;
+    if (lower.includes('sonnet') || lower.includes('opus')) return 1_000_000;
+  }
+  return 1_000_000;
+}
+
 function computeSystemPromptTokens(): number {
   const chars = fileCharCount(SYSTEM_PROMPT);
   return estimateTokens(chars);
@@ -147,7 +179,13 @@ async function main() {
       skills_count: skillsCount,
       estimated_skills_tokens: estimatedSkills,
       total_estimated_baseline: totalEstimated,
-      context_budget_pct: Math.round((totalEstimated / 200000) * 100),
+      // Use CLAUDE_CODE_AUTO_COMPACT_WINDOW when set (PAI backend scripts
+      // set this — minimax.sh=512K, glm.sh=1M). Fall back to the model-aware
+      // heuristic from PreCompact.hook.ts so the budget percentage reflects
+      // the trigger the auto-compact will actually fire at.
+      // Previously hardcoded 200000 — wrong for M3 (512K) and Sonnet/Opus (1M).
+      context_budget_pct: Math.round((totalEstimated / resolveContextWindow()) * 100),
+      context_window_size: resolveContextWindow(),
     };
 
     appendFileSync(CONTEXT_LOG, JSON.stringify(event) + "\n");

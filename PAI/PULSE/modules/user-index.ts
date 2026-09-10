@@ -125,7 +125,6 @@ const ROOT_FALLBACK: Record<string, { category: Category; kind: Kind; publish: P
   "WRITINGSTYLE.md":         { category: "voice",    kind: "narrative",  publish: "false" },
   "RHETORICALSTYLE.md":      { category: "voice",    kind: "narrative",  publish: "false" },
   "AI_WRITING_PATTERNS.md":  { category: "voice",    kind: "reference",  publish: "false" },
-  "PRONUNCIATIONS.md":       { category: "voice",    kind: "reference",  publish: "false" },
   "DEFINITIONS.md":          { category: "mind",     kind: "reference",  publish: "daemon" },
   "CORECONTENT.md":          { category: "mind",     kind: "reference",  publish: "false" },
   "PRODUCTIVITY.md":         { category: "ops",      kind: "narrative",  publish: "false" },

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # BenchAllGgufs.sh — warm_p50_ms benchmark for all GGUFs on your-inference-host
-# Stops main llama-server, cycles each GGUF through a temp instance on port 11435,
+# Stops main llama-server, cycles each GGUF through a temp instance on port 11436,
 # runs BenchmarkLocalModels.ts for each, then restores the main service.
 # Usage: bash PAI/TOOLS/BenchAllGgufs.sh [--dry-run]
 set -euo pipefail
 
 your-inference-host="your-inference-host"
 UBULLM_HOST="127.0.0.1"
-TEMP_PORT=11435
+TEMP_PORT=11436
 PAI_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DRY_RUN="${1:-}"
 RESULTS_DIR="/tmp/bench-all-ggufs-$(date +%Y%m%d-%H%M%S)"

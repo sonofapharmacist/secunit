@@ -13,14 +13,12 @@ The PAI templating system enables **prompts that write prompts**—dynamic compo
 Templates/
 ├── Primitives/       # Core template files (.hbs)
 │   ├── Roster.hbs    # Agent/skill definitions
-│   ├── Voice.hbs     # Personality calibration
 │   ├── Structure.hbs # Workflow patterns
 │   ├── Briefing.hbs  # Agent context handoff
 │   └── Gate.hbs      # Validation checklists
 ├── Data/             # YAML data sources
 │   ├── Agents.yaml   # All agent definitions
 │   ├── Skills.yaml   # All skill definitions
-│   ├── VoicePresets.yaml    # Voice calibration presets
 │   └── ValidationGates.yaml # Standard validation gates
 ├── Evals/            # Eval-specific templates
 │   ├── Judge.hbs     # LLM-as-Judge prompt template
@@ -41,12 +39,12 @@ PAI uses Handlebars notation for template variables:
 | Syntax | Purpose | Example |
 |--------|---------|---------|
 | `{{variable}}` | Simple interpolation | `Hello {{name}}` |
-| `{{object.property}}` | Nested access | `{{agent.voice_id}}` |
+| `{{object.property}}` | Nested access | `{{agent.color}}` |
 | `{{#each items}}...{{/each}}` | Iteration | List generation |
 | `{{#if condition}}...{{/if}}` | Conditional | Optional sections |
 | `{{> partial}}` | Include partial | Reusable components |
 
-## Five Core Primitives
+## Four Core Primitives
 
 ### 1. ROSTER — Agent & Skill Definitions
 
@@ -55,18 +53,8 @@ Data-driven generation of structured definitions from YAML.
 **Use Cases:**
 - 32 RedTeam agent personalities
 - 83 skill frontmatter definitions
-- Voice configuration presets
 
-### 2. VOICE — Personality Calibration
-
-Parameterized voice and tone settings.
-
-**Use Cases:**
-- Agent voice parameters (stability, similarity_boost)
-- Speaking rate calibration
-- Character archetype mapping
-
-### 3. STRUCTURE — Workflow Patterns
+### 2. STRUCTURE — Workflow Patterns
 
 Standardized multi-step execution patterns.
 
@@ -75,7 +63,7 @@ Standardized multi-step execution patterns.
 - Round-based debate (Council 3-round)
 - Sequential pipeline (Development gates)
 
-### 4. BRIEFING — Agent Context Handoff
+### 3. BRIEFING — Agent Context Handoff
 
 How agents receive tasks and context.
 
@@ -84,7 +72,7 @@ How agents receive tasks and context.
 - RedTeam analyst prompts
 - Delegation context packages
 
-### 5. GATE — Validation Checklists
+### 4. GATE — Validation Checklists
 
 Reusable quality and completion checks.
 
@@ -259,7 +247,6 @@ bun run ~/.claude/skills/Prompting/Tools/ValidateTemplate.ts \
 | I want to... | Use Template | With Data |
 |--------------|--------------|-----------|
 | Generate agent roster | `Roster.hbs` | `Agents.yaml` |
-| Configure voice settings | `Voice.hbs` | `VoicePresets.yaml` |
 | Create workflow structure | `Structure.hbs` | Custom YAML |
 | Brief an agent | `Briefing.hbs` | Task context |
 | Create validation checklist | `Gate.hbs` | `ValidationGates.yaml` |
@@ -291,7 +278,7 @@ Provide your reasoning BEFORE giving a score.
 
 **Nested property access:**
 ```handlebars
-{{agent.voice.settings.stability}}
+{{agent.persona.background}}
 ```
 
 ## Research Foundation

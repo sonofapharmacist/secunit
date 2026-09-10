@@ -35,7 +35,7 @@
 #
 # What works offline:    E1 Native | hooks | memory | tools | skills | Pulse
 #                        Inference.ts → nous, openrouter, ollama (independent of Claude Code)
-# What doesn't work:     E3+ Algorithm | voice (ElevenLabs) | feeds | Forge/codex (OpenAI)
+# What doesn't work:     E3+ Algorithm | feeds | Forge/codex (OpenAI)
 #
 # Model: any small tool-use-capable model works as a floor (e.g. nemotron-nano-9b-v2, ~5GB)
 #   larger models (e.g. qwen3:30b-a3b) give better quality — swap with: claude --model <name>

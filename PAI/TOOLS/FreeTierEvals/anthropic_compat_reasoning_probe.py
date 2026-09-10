@@ -70,6 +70,13 @@ ENDPOINTS = {
         "passage_key": "api/glm",
         "is_reasoning": True,
     },
+    "glm53": {
+        "name": "Z.ai GLM-5.3 (2026-08-14 — thinking cannot be disabled, confirmed 2026-08-16)",
+        "url": "https://api.z.ai/api/anthropic/v1/messages",
+        "model": "glm-5.3",
+        "passage_key": "api/glm",
+        "is_reasoning": True,
+    },
     "m3": {
         "name": "MiniMax M3 (512K)",
         "url": "https://api.minimax.io/anthropic/v1/messages",
@@ -331,6 +338,12 @@ def call_anthropic(target_key: str, prompt: str, max_tokens: int, is_reasoning: 
     # Fable 5: effort dial only; no temperature, no thinking param (always-on).
     if cfg["model"] == "claude-fable-5":
         payload["output_config"] = {"effort": _effort_level()}
+    # GLM-5.3 (confirmed 2026-08-16): thinking can no longer be disabled — omitting the
+    # block returns HTTP 400 code 1210. budget_tokens must leave headroom beyond max_tokens
+    # or the whole response gets consumed by the thinking trace with zero answer text returned.
+    if cfg["model"] == "glm-5.3":
+        payload["thinking"] = {"type": "enabled", "budget_tokens": 4096}
+        payload["max_tokens"] = payload["max_tokens"] + 4096
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(

@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+qwen3_30b_a3b,llamacpp,2,8,16,15,39,53,144.3,complete,,,0,0.0

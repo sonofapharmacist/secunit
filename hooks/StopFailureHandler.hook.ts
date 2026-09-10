@@ -6,13 +6,12 @@
  * Added: v2.1.78
  *
  * Logs API failures (rate limits, auth errors, server errors) and sends
- * a voice notification so {{PRINCIPAL_NAME}} knows the session hit an error.
+ * a desktop notification so {{PRINCIPAL_NAME}} knows the session hit an error.
  */
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'fs';
 import { paiPath } from './lib/paths';
 import { getISOTimestamp, getPSTDate, getYearMonth } from './lib/time';
-import { getVoiceId } from './lib/identity';
 
 interface StopFailureInput {
   session_id?: string;
@@ -54,20 +53,18 @@ async function main() {
     // Silent — don't block on logging failure
   }
 
-  // Voice notification for API errors
+  // Desktop notification for API errors
   try {
     await fetch('http://localhost:31337/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: 'API error ended the turn. Check the session.',
-        voice_id: getVoiceId(),
-        voice_enabled: true
       }),
       signal: AbortSignal.timeout(3000),
     });
   } catch {
-    // Silent — voice server may be down
+    // Silent — Pulse may be down
   }
 
   process.exit(0);

@@ -188,6 +188,45 @@ function extractCommand(input: Record<string, unknown> | string): string {
   return (input?.command as string) || '';
 }
 
+// ── Bash Path Extraction ──
+//
+// paths.zeroAccess / alertAccess were only ever enforced for the Read/Write/Edit tools.
+// The same file named inside a Bash command (`cat ~/.ssh/id_rsa`, `curl -d "$(cat
+// ~/.ssh/id_rsa)"`, `curl -F f=@$HOME/.aws/credentials`) was never checked — a
+// tool-asymmetry bypass found 2026-09-10 by synthetic-stdin probe. This pulls every
+// absolute or home-rooted path token out of the command and runs it through the same
+// path policy. Relative tokens are deliberately not extracted (too many false positives);
+// bash.alert patterns still cover `.env`-style relative reads.
+const BASH_PATH_TOKEN = /(?:~|\$HOME|\$\{HOME\})?\/[^\s'"`;|&()<>]+/g;
+
+function extractPathTokens(command: string): string[] {
+  const out: string[] = [];
+  for (const m of command.matchAll(BASH_PATH_TOKEN)) {
+    let tok = m[0].replace(/[,:.]+$/, '');
+    // Skip URL paths — "https://host/x" yields "//host/x"; a lone "/" or "//..." is not a file.
+    if (tok.startsWith('//') || tok === '/') continue;
+    tok = tok.replace(/^\$\{HOME\}|^\$HOME/, '~');
+    out.push(tok);
+  }
+  return out;
+}
+
+function inspectBashPaths(command: string, config: PatternsConfig): InspectionResult {
+  const tokens = extractPathTokens(command);
+  if (tokens.length === 0) return ALLOW;
+  for (const tok of tokens) {
+    for (const p of (config.paths.zeroAccess || [])) {
+      if (matchesPathPattern(tok, p)) return deny(`Zero access path in command: ${p}`);
+    }
+  }
+  for (const tok of tokens) {
+    for (const p of (config.paths.alertAccess || [])) {
+      if (matchesPathPattern(tok, p)) return alert(`Env file access in command logged: ${p}`);
+    }
+  }
+  return ALLOW;
+}
+
 // ── Inspection Logic ──
 
 // Shell chaining operators that allow injecting a second command after a trusted prefix
@@ -196,6 +235,11 @@ const SHELL_CHAIN_OPERATORS = /&&|\|\||;|\n|\r|`/;
 function inspectBash(command: string, config: PatternsConfig): InspectionResult {
   const normalized = stripEnvVarPrefix(command);
   if (!normalized) return ALLOW;
+
+  // Zero-access paths are denied regardless of trusted-prefix — checked before the
+  // trusted short-circuit so a trusted tool cannot be used as a read primitive.
+  const pathResult = inspectBashPaths(normalized, config);
+  if (pathResult.action === 'deny') return pathResult;
 
   // Trusted patterns short-circuit ONLY when no shell chaining operators are present.
   // A trusted prefix followed by && malicious_suffix must fall through to full inspection.
@@ -213,6 +257,8 @@ function inspectBash(command: string, config: PatternsConfig): InspectionResult 
   for (const p of (config.bash.confirm || [])) {
     if (matchesBashPattern(normalized, p.pattern)) return requireApproval(p.reason);
   }
+
+  if (pathResult.action === 'alert') return pathResult;
 
   for (const p of (config.bash.alert || [])) {
     if (matchesBashPattern(normalized, p.pattern)) return alert(p.reason);

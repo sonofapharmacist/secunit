@@ -18,7 +18,7 @@ Tier 3: Ollama Local (your-ollama-host.example.com:11436)       — airgap fallb
 |---------|-----------|----------|------------|--------------|
 | E1/E2 Native | ✓ | ✓ | ✓ | ✓ |
 | E3+ Algorithm | ✓ | ✓ | ✓ | E1 only (slower) |
-| Voice (ElevenLabs) | ✓ | ✓ | ✓ | ✓ |
+| Desktop notifications | ✓ | ✓ | ✓ | ✓ |
 | Feeds (TLDR, etc.) | ✓ | ✓ | ✓ | ✓ |
 | Forge/codex (OpenAI) | ✓ | ✓ | ✓ | ✓ |
 | TPM ceiling | Yes | No (subscription) | Yes | Hardware-bound |

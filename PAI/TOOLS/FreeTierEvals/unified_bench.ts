@@ -100,8 +100,12 @@ const MODEL_TO_TM_SLOT: Record<string, string> = {
   codestral: "codestral",
   // OpenRouter non-Mistral
   kimiK26: "kimiK26",
+  longcat2: "longcat2",           // Meituan LongCat 2.0 (OpenRouter 60% off)
   // Local via llama-server (TM bench uses native llama-server endpoint)
   qwen3_30b_a3b: "qwen3_30b_a3b",
+  museGlimmer30b: "museGlimmer30b",
+  museGlimmer30bKquantDynamic: "museGlimmer30bKquantDynamic",
+  museGlimmer30bKquantDynamicServerDefault: "museGlimmer30bKquantDynamicServerDefault",
   qwen3Coder30bA3b: "qwen3_coder_30b_a3b",
   nemotron3_30b_a3b_r: "nemotron_3_nano_30b_a3b",
   mistral_small31_24b: "mistral_small_31_24b",
@@ -118,6 +122,7 @@ const MODELS: ModelSpec[] = [
   { key: "fable5", name: "Claude Fable 5 (Claude 5 family, always-on thinking)", model: "claude-fable-5", provider: "anthropic", anthropicCompat: false, fenceStrip: false, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/anthropic", tier: 0 },
   { key: "m3", name: "MiniMax M3 (512K)", model: "MiniMax-M3", provider: "minimax", anthropicCompat: true, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/minimax", tier: 0 },
   { key: "glm52-1m", name: "Z.ai GLM-5.2 (1M ctx, 3x quota — emergency-only)", model: "glm-5.2", provider: "zai", anthropicCompat: true, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 1, passageKey: "api/glm", tier: 0 },
+  { key: "glm53", name: "Z.ai GLM-5.3 (2026-08-14 — thinking always-on, confirmed 2026-08-16)", model: "glm-5.3", provider: "zai", anthropicCompat: true, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 1, passageKey: "api/glm", tier: 0 },
   { key: "glm51", name: "Z.ai GLM-5.1 (top of Z.ai catalog)", model: "glm-5.1", provider: "zai", anthropicCompat: true, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/glm", tier: 0 },
   { key: "glm47", name: "Z.ai GLM-4.7 (Sonnet slot)", model: "glm-4.7", provider: "zai", anthropicCompat: true, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/glm", tier: 0 },
   { key: "glm45air", name: "Z.ai GLM-4.5-air (Haiku slot)", model: "glm-4.5-air", provider: "zai", anthropicCompat: true, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/glm", tier: 0 },
@@ -147,6 +152,7 @@ const MODELS: ModelSpec[] = [
   { key: "flash35", name: "Gemini 3.5 Flash (thinking-capable)", model: "gemini-3.5-flash", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 2 },
   { key: "flashLite31", name: "Gemini 3.1 Flash-Lite (free tier)", model: "gemini-3.1-flash-lite", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 3 },
   { key: "flash36", name: "Gemini 3.6 Flash (thinking-capable)", model: "gemini-3.6-flash", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 2 },
+  { key: "flash37", name: "Gemini 3.7 Flash (thinking-capable)", model: "gemini-3.7-flash", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 2 },
   { key: "flashLite35", name: "Gemini 3.5 Flash-Lite (free tier)", model: "gemini-3.5-flash-lite", provider: "gemini", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "api/gemini", tier: 3 },
   // Local llama-server roster (your-inference-host, V100 32GB HBM2, OpenAI-compat :11434, no auth)
   // Keys here MUST match the MODELS dict in llamacpp_eval.py. Run order per ISA Decision 2026-06-23 14:31.
@@ -159,10 +165,15 @@ const MODELS: ModelSpec[] = [
   { key: "qwen35_9b_deepseek_v4_flash", name: "qwen3.5-9b-DeepSeek-V4-Flash (your-inference-host)", model: "qwen35-9b-v4-flash", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 4 },
   // Added 2026-06-23 — rerun of Tier 2/3 local models never put through the 53-pt unified suite.
   { key: "qwen3_30b_a3b", name: "Qwen3-30B-A3B-Instruct-2507 (your-inference-host, IQ4_XS)", model: "qwen3:30b-a3b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  { key: "museGlimmer30b", name: "Meta Muse Glimmer 30B (your-inference-host, K-Quant-17GB, dense+vision, one-shot test)", model: "muse-glimmer-30b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  { key: "museGlimmer30bKquantDynamic", name: "Meta Muse Glimmer 30B (your-inference-host, K-Quant-Dynamic 19.7GB, Meta-recommended sampler temp=1/top_p=0.95/top_k=64 set server-side)", model: "museGlimmer30bKquantDynamic", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 1, passageKey: "", tier: 2 },
+  { key: "museGlimmer30bKquantDynamicServerDefault", name: "Meta Muse Glimmer 30B (your-inference-host, K-Quant-Dynamic 19.7GB, llama-server documented defaults temp=0.8/top_p=0.95/top_k=40 set explicitly since harness always sends a temperature field)", model: "museGlimmer30bKquantDynamicServerDefault", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0.8, passageKey: "", tier: 2 },
   { key: "mellum2_12b", name: "Mellum2-12B-A2.5B-Instruct (your-inference-host)", model: "mellum2:12b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
   { key: "mellum2_12b_thinking", name: "Mellum2-12B-A2.5B-Thinking (your-inference-host)", model: "mellum2-thinking:12b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
   { key: "nemotron3_nano_4b", name: "Nemotron3-Nano-4B (your-inference-host)", model: "nemotron3-nano:4b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
   { key: "qwen3_30b_a3b_udq4kxl", name: "Qwen3-30B-A3B-Instruct-2507 (your-inference-host, UD-Q4_K_XL)", model: "qwen3-udq4kxl:30b-a3b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  { key: "nemotron35Lightning30b", name: "NVIDIA Nemotron-3.5-Lightning-30B-A3B (your-inference-host, Q4_K_M via Ollama blob extraction, Mamba-2+MoE+Attention hybrid, nemotron_h arch)", model: "nemotron35Lightning30b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  { key: "thinkingCapQwen36_27b", name: "BottleCap AI ThinkingCap-Qwen3.6-27B (your-inference-host, Q4_K_M, RL post-trained for reasoning brevity, tool calling verified working)", model: "thinkingCapQwen36_27b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
   // Added 2026-06-30 — must match llamacpp_eval.py's MODELS dict (see keys-must-match invariant above).
   { key: "nemotron3_30b_a3b_r", name: "Nemotron-3-Nano-Omni-30B-A3B-R (your-inference-host, IQ4_NL, reasoning)", model: "nemotron30b-a3b-r", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 1, passageKey: "", tier: 2 },
   { key: "mistral_small31_24b", name: "Mistral-Small-3.1-24B (your-inference-host, Q4_K_M)", model: "mistral-sm31:24b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
@@ -179,6 +190,20 @@ const MODELS: ModelSpec[] = [
   { key: "nousCoder14b", name: "NousCoder-14B (your-inference-host, Q4_K_M)", model: "nouscoder:14b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
   { key: "nemotronNano9bV2", name: "nemotron-nano-9b-v2 (your-inference-host, Q4_K_M)", model: "nemotron-nano:9b-v2", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
   { key: "qwen3Coder30bA3b", name: "Qwen3-Coder-30B-A3B-Instruct (your-inference-host, IQ4_XS)", model: "qwen3-coder:30b-a3b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  // Added 2026-08-07 — dual-GPU 64GB-pool bigger-model bench round (2026-08-06/07).
+  // Keys match llamacpp_eval.py's MODELS dict keys (coder_next, glm45air, glm47flash,
+  // glm45air_iq2m, devstral_small2, devstral2_123b) except glm45air, which collided with
+  // the pre-existing Z.ai cloud entry's key — see glm45air_local below and its targetKeyFor
+  // map entry. All others fall through to model.key with no map entry needed.
+  { key: "coder_next", name: "Qwen3-Coder-Next (your-inference-host, Q4_K_M, dual-GPU, 80B-A3B) — 49/53", model: "coder-next", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  { key: "devstral2_123b", name: "Devstral-2-123B (your-inference-host, UD-IQ3_XXS, dual-GPU, 125B dense-ish) — 52/53, first local R5-breaker", model: "devstral2-123b", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 2 },
+  { key: "devstral_small2", name: "Devstral Small 2 (your-inference-host, UD-Q4_K_XL, dual-GPU, 24B dense) — 42/53", model: "devstral-small2", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: false, maxTokens: 4096, temperature: 0, passageKey: "", tier: 3 },
+  { key: "glm47flash", name: "GLM-4.7-Flash (your-inference-host, UD-Q4_K_XL, dual-GPU, 30B-A3B) — 39/53, empty-content on T3/T9/R5/C2/C4", model: "glm47flash", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 0, passageKey: "", tier: 3 },
+  // key "glm45air" is already taken by the Z.ai cloud entry above (line ~124) — using it here
+  // would silently shadow that entry in MODELS.find(), MODEL_TO_TM_SLOT, and the CSV output
+  // (caught by Cato audit 2026-08-07). Use a distinct key, mapped to the Python target below.
+  { key: "glm45air_local", name: "GLM-4.5-Air (your-inference-host, UD-IQ2_XXS, dual-GPU, 110B-A12B) — ~27/53, IQ2 quality collapse", model: "glm45air", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 0, passageKey: "", tier: 4 },
+  { key: "glm45air_iq2m", name: "GLM-4.5-Air (your-inference-host, UD-IQ2_M, dual-GPU, 110B-A12B) — ~27/53, same collapse as IQ2_XXS", model: "glm45air-iq2m", provider: "llamacpp", anthropicCompat: false, fenceStrip: true, typeFilter: true, maxTokens: 8192, temperature: 0, passageKey: "", tier: 4 },
 ];
 
 // ── Test battery registry ────────────────────────────────────────────────────
@@ -325,8 +350,8 @@ function resolveScriptForC(model: ModelSpec): string {
 function targetKeyFor(model: ModelSpec): string {
   // Map our key to the python script's --target argument
   const map: Record<string, string> = {
-    m3: "m3", glm52: "glm52-1m", glm52_1m: "glm52-1m", glm51: "glm52",
-    glm47: "glm47", glm45air: "glm", glm: "glm",
+    m3: "m3", glm52: "glm52-1m", glm52_1m: "glm52-1m", glm51: "glm52", glm53: "glm53",
+    glm47: "glm47", glm45air: "glm", glm: "glm", glm45air_local: "glm45air",
     small4: "small4", codestral: "codestral", medium35: "medium35",
     magistralS: "magistral_s", devstralMed: "devstral_med", devstralSmall2: "devstral_small2",
     ministral8b: "ministral_8b", ministral14b: "ministral_14b",
@@ -338,6 +363,7 @@ function targetKeyFor(model: ModelSpec): string {
     flashLite31: "flash_lite_31",
     flash36: "flash_36",
     flashLite35: "flash_lite_35",
+    flash37: "flash_37",
   };
   return map[model.key] ?? model.key;
 }

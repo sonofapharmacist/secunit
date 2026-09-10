@@ -4,7 +4,6 @@
  *
  * Single process managing all PAI daemon functionality:
  *   - Cron job scheduling (heartbeat loop)
- *   - Voice notifications (ElevenLabs TTS)
  *   - Hook validation (skill-guard, agent-guard)
  *   - Observability (data APIs + dashboard)
  *   - Telegram bot (grammY polling + claude-agent-sdk)
@@ -60,18 +59,16 @@ import {
 import { startHooks, handleHooksRequestAsync, hooksHealth } from "./modules/hooks"
 
 // Conditional imports — modules may not exist yet during incremental migration
-let voiceModule: any = null
+let notifyModule: any = null
 let observabilityModule: any = null
 let telegramModule: any = null
 let imessageModule: any = null
 
 async function loadModules(config: PulseConfig) {
-  if (config.voice?.enabled !== false) {
-    try {
-      voiceModule = await import("./VoiceServer/voice")
-    } catch (err) {
-      log("warn", "Voice module not available", { error: String(err) })
-    }
+  try {
+    notifyModule = await import("./Notify")
+  } catch (err) {
+    log("warn", "Notify module not available", { error: String(err) })
   }
   if (config.observability?.enabled !== false) {
     try {
@@ -100,7 +97,6 @@ async function loadModules(config: PulseConfig) {
 
 interface PulseConfig {
   port: number
-  voice?: { enabled: boolean; [key: string]: unknown }
   telegram?: { enabled: boolean; [key: string]: unknown }
   imessage?: { enabled: boolean; [key: string]: unknown }
   observability?: { enabled: boolean; dashboard_dir?: string; [key: string]: unknown }
@@ -128,7 +124,6 @@ async function loadPulseConfig(): Promise<PulseConfig> {
 
   return {
     port: (parsed.port as number) ?? parseInt(process.env.PULSE_PORT || "8686", 10),
-    voice: (parsed.voice as PulseConfig["voice"]) ?? { enabled: true },
     telegram: (parsed.telegram as PulseConfig["telegram"]) ?? { enabled: false },
     imessage: (parsed.imessage as PulseConfig["imessage"]) ?? { enabled: false },
     observability: (parsed.observability as PulseConfig["observability"]) ?? { enabled: true },
@@ -196,14 +191,14 @@ function buildHealthResponse(state: DaemonState, config: PulseConfig): Response 
     })),
   }
 
+  // Notify
+  if (notifyModule) {
+    subsystems.notify = notifyModule.notifyHealth()
+  }
+
   // Hooks
   if (config.hooks?.enabled !== false) {
     subsystems.hooks = hooksHealth()
-  }
-
-  // Voice
-  if (voiceModule && config.voice?.enabled !== false) {
-    subsystems.voice = voiceModule.voiceHealth()
   }
 
   // Observability
@@ -247,7 +242,6 @@ async function main() {
     port: config.port,
     jobs: enabledJobs.length,
     modules: {
-      voice: config.voice?.enabled !== false,
       hooks: config.hooks?.enabled !== false,
       observability: config.observability?.enabled !== false,
       telegram: config.telegram?.enabled ?? false,
@@ -270,13 +264,13 @@ async function main() {
   await loadModules(config)
 
   // ── Initialize Modules ──
-  if (config.hooks?.enabled !== false) {
-    startHooks(config.hooks ?? { enabled: true })
+  if (notifyModule) {
+    notifyModule.startNotify({ enabled: true })
+    log("info", "Notify module loaded")
   }
 
-  if (voiceModule && config.voice?.enabled !== false) {
-    voiceModule.startVoice(config.voice)
-    log("info", "Voice module loaded")
+  if (config.hooks?.enabled !== false) {
+    startHooks(config.hooks ?? { enabled: true })
   }
 
   if (observabilityModule && config.observability?.enabled !== false) {
@@ -298,9 +292,9 @@ async function main() {
         return buildHealthResponse(state, config)
       }
 
-      // Voice routes: /notify, /notify/personality, /voice
-      if (voiceModule && (pathname === "/notify" || pathname === "/notify/personality" || pathname === "/voice")) {
-        const resp = await voiceModule.handleVoiceRequest(req, pathname)
+      // Notify routes: /notify, /notify/personality, /notify/health, /voice
+      if (notifyModule && (pathname === "/notify" || pathname === "/notify/personality" || pathname === "/notify/health" || pathname === "/voice")) {
+        const resp = await notifyModule.handleNotifyRequest(req)
         if (resp) return resp
       }
 

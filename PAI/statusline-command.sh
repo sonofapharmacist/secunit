@@ -273,6 +273,13 @@ case "${_backend_url:-}" in
                 context_max=1000000
                 _context_window="1M"
                 ;;
+            *5.3*)
+                # GLM-5.3: same base as 5.2 (1M nominal) but practical serving
+                # window is ~200K (VentureBeat spec + Cursor forum empirical,
+                # 2026-08-15). 200K until a serving path verifiably honors 1M.
+                context_max=200000
+                _context_window="200K"
+                ;;
             *)
                 context_max=128000
                 _context_window="128K"
@@ -316,7 +323,31 @@ if [ "$_model_override" -eq 0 ]; then
             context_max=128000; _context_window="128K"; _model_override=1 ;;
         *glm-5.2*|*glm52*|*glm5.2*)
             context_max=1000000; _context_window="1M"; _model_override=1 ;;
+        *glm-5.3*|*glm53*|*glm5.3*)
+            context_max=200000; _context_window="200K"; _model_override=1 ;;
     esac
+fi
+
+# ── Single source of truth: CLAUDE_CODE_AUTO_COMPACT_WINDOW wins when set ──
+# The case statements above hardcode context_max per model name/family, which
+# silently drifts out of sync with the real enforcement threshold whenever a
+# model's serving window changes (Sonnet 5, GLM 5.2->5.3, a new backend) —
+# the hardcoded value here and CLAUDE_CODE_AUTO_COMPACT_WINDOW (set by
+# glm.sh/minimax.sh/minimax-or.sh, which is what actually gates the hard
+# /compact stop) are two independently-maintained numbers that happen to
+# agree today but aren't wired together. When the env var is set and
+# non-Anthropic (_model_override=1), it overrides the hardcoded guess so the
+# displayed % tracks the value that actually triggers compaction. See
+# MEMORY/WORK/20260816-010534_statusline-context-desync/ISA.md.
+if [ "$_model_override" -eq 1 ] && [ -n "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" ] && [ "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}" -gt 0 ] 2>/dev/null; then
+    context_max="$CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+    if [ "$context_max" -ge 1000000 ]; then
+        _context_window="$((context_max / 1000000))M"
+    elif [ "$context_max" -ge 1000 ]; then
+        _context_window="$((context_max / 1000))K"
+    else
+        _context_window="${context_max}"
+    fi
 fi
 
 # Only derive _context_window from context_max when no model-specific override ran.

@@ -17,6 +17,7 @@ ENDPOINTS = {
     "flash_lite_31": {"name": "Gemini 3.1 Flash-Lite", "model": "gemini-3.1-flash-lite", "thinking": False, "sleep": 0},
     "flash_36":      {"name": "Gemini 3.6 Flash",      "model": "gemini-3.6-flash",      "thinking": True,  "sleep": 0.5},
     "flash_lite_35": {"name": "Gemini 3.5 Flash-Lite", "model": "gemini-3.5-flash-lite", "thinking": False, "sleep": 0},
+    "flash_37":      {"name": "Gemini 3.7 Flash",      "model": "gemini-3.7-flash",      "thinking": True,  "sleep": 0.5},  # assumed 1K RPM Tier 1, unverified for new model
 }
 
 def resolve_key():
@@ -41,7 +42,7 @@ def _strip_fence(s):
 # Generation confirmed 2026-07-22: 3.6 Flash / 3.5 Flash-Lite reject thinkingBudget:0 with
 # HTTP 400 INVALID_ARGUMENT (budget -1 and omitting the field both work) — thinking can no
 # longer be fully disabled on these models. Older Flash variants accept budget 0 fine.
-NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite"}
+NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.7-flash"}
 
 # 3.6 Flash specifically: even at thinkingBudget:1 (the minimum legal value), thoughtsTokenCount
 # ranged 6-2188 in spot checks (a C-battery test-gen prompt hit 2188, well above the original
@@ -50,7 +51,7 @@ NO_ZERO_BUDGET_MODELS = {"gemini-3.6-flash", "gemini-3.5-flash-lite"}
 # MAX_TOKENS. 3.5 Flash-Lite showed no such overhead with thinkingConfig omitted entirely
 # (scored 46/53 clean), so it's not given this treatment. Overhead is additive to the requested
 # budget, not a flat floor — must pad max_tokens by the reserve, not max() against it.
-ALWAYS_THINKS_MODELS = {"gemini-3.6-flash"}
+ALWAYS_THINKS_MODELS = {"gemini-3.6-flash", "gemini-3.7-flash"}
 THINKING_OVERHEAD_RESERVE = 3000
 
 def call_gemini(model, prompt, max_tokens, tools=None):

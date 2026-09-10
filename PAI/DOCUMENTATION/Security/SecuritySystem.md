@@ -220,6 +220,6 @@ The `MEMORY/SECURITY/**` path is `readOnly` — the AI can create new logs but c
 
 Notes on how to read findings during security work — not Bash patterns (those live in `USER/SECURITY/PATTERNS.yaml`), but framings that prevent miscategorization.
 
-### ElevenLabs `voice_id` values are NOT secrets
+### Residual `voice_id` strings are NOT secrets
 
-`voice_id` strings (e.g., `fTtv3eikoepIosk8dTZ5`, `{{PAI_MAIN_VOICE_ID}}`) are public identifiers — anyone with their own `ELEVENLABS_API_KEY` can use any voice. Never flag hardcoded voice_ids in public skills as P0 credential leaks; they're at most a UX/branding finding (every fresh install sounds like the upstream DA's voice by default until customized). The actual secret is `ELEVENLABS_API_KEY`.
+PAI removed its text-to-speech integration on 2026-08-08. Any leftover `voice_id` strings (e.g., `fTtv3eikoepIosk8dTZ5`) still sitting in old skills, configs, or archived docs are inert public identifiers, not credentials. Never flag them as P0 credential leaks; they are at most dead-config cleanup findings.

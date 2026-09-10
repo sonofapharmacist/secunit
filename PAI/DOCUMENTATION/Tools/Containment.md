@@ -56,7 +56,7 @@ Zones drift. Before running `bun PAI/TOOLS/release.ts`:
 A file outside every configured zone is a policy violation if it contains any of:
 
 - **Identity** — absolute user paths, personal email, personal domain names, principal-specific hostnames
-- **Infrastructure IDs** — Cloudflare account or KV namespace IDs, ElevenLabs voice IDs, launchd bundle IDs, any UUID that identifies a specific account or resource
+- **Infrastructure IDs** — Cloudflare account or KV namespace IDs, launchd bundle IDs, any UUID that identifies a specific account or resource
 - **Secrets** — API tokens, private keys (`.pem`, `.key`), session cookies, OAuth refresh tokens
 
 `PAI/TOOLS/release.ts` enforces all three categories retrospectively at release time via `PERSONAL_PATTERNS` (identifier gate) and SecretScan. There is no prospective write-time guard — `ContainmentGuard.hook.ts` was retired (never registered, upstream-identity patterns).
@@ -118,6 +118,7 @@ Record them in `SCAN_WHITELIST` in `PAI/TOOLS/release.ts`, with a note in the li
     - **SecretScan** — `PAI/TOOLS/SecretScan.ts` over the staged tree.
     - **Identifier gate** — no `PERSONAL_PATTERNS` hits (except files in `SCAN_WHITELIST`).
     - **Grype** — vulnerability scan; runs after the first three pass.
+    - **Semantic leak gate** (advisory, added 2026-09-10) — `PAI/TOOLS/SemanticLeakGate.ts`, called from `runSemanticLeakGate()` after the deterministic gates pass. Sends every staged `.md`/`.txt` file, chunked, to a **local-only** model (`SECUNIT_SEMANTIC_GATE_URL`, must resolve to a private-range host or the gate refuses) and asks whether a stranger would learn something private about a real person. Flags are printed with a one-line reason and repeated in the push prompt; they never block on their own and no flag hides them. Fails closed: endpoint unset, non-private, unreachable, or unparseable → every unreviewed file is reported as such. No cloud fallback exists by design — the question itself is private. Verdicts are cached by content hash in `~/.cache/secunit-semantic-cache.json`, so only changed prose is re-sent on later releases.
 5. **Pass all four → push prompt.** Any fail → `process.exit(1)` with the staged tree preserved at `~/.cache/secunit-stage` for inspection; fix source or refine exclusions, never hide with allowlist unless the file legitimately needs the pattern.
 6. **Public publish is a separate step.** The shadow release stays under `PAI/PAI_RELEASES/PAI_Release_v{VERSION}/.claude/` until a deliberate publish action ships it to the public repo.
 

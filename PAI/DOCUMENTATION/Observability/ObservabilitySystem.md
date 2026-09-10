@@ -1,6 +1,6 @@
 # The Observability System
 
-Single-source, multi-destination event pipeline for PAI tool activity, voice events, subagent lifecycle, and tool failures.
+Single-source, multi-destination event pipeline for PAI tool activity, subagent lifecycle, and tool failures.
 
 > **Infrastructure:** The observability HTTP server (`localhost:31337`) runs as a module inside the unified Pulse daemon (`~/.claude/PAI/PULSE/Observability/observability.ts`). There is no separate observability server process -- Pulse serves all local HTTP endpoints on port 31337.
 
@@ -10,7 +10,7 @@ Single-source, multi-destination event pipeline for PAI tool activity, voice eve
 JSONL Sources (local disk)          settings.json
   ├─ tool-activity.jsonl (100)   ──→  observability.targets[]
   ├─ tool-failures.jsonl (50)         ├─ { type: "cloudflare-kv", name: "production" }
-  ├─ voice-events.jsonl (50)          ├─ { type: "http", name: "local", url: "..." }
+  ├─ voice-events.jsonl (50, frozen)  ├─ { type: "http", name: "local", url: "..." }
   └─ subagent-events.jsonl (50)       └─ ... (0-N targets)
           │                                    │
           ▼                                    ▼
@@ -96,7 +96,7 @@ Example — adding a staging environment:
 |--------|-----------|-----------------|------|
 | Tool activity | `MEMORY/OBSERVABILITY/tool-activity.jsonl` | 100 | `ToolActivityTracker.hook.ts` (PostToolUse, catch-all) |
 | Tool failures | `MEMORY/OBSERVABILITY/tool-failures.jsonl` | 50 | `ToolFailureTracker.hook.ts` (PostToolUseFailure) |
-| Voice events | `MEMORY/VOICE/voice-events.jsonl` | 50 | Voice notification server |
+| Voice events (historical) | `MEMORY/VOICE/voice-events.jsonl` | 50 | None — no writer since the text-to-speech removal (2026-08-08). The collectors and `/api/observability/voice-events` still read the file, so pre-removal history stays visible; no new events are appended. |
 | Subagent events | `MEMORY/OBSERVABILITY/subagent-events.jsonl` | 50 | `AgentInvocation.hook.ts` (PreToolUse:Agent / PostToolUse:Agent) |
 | Agent watchdog | stdout (Monitor notifications) | — | `Tools/AgentWatchdog.ts` via Monitor tool. Reads tool-activity.jsonl + subagent-starts.json; alerts on 90s silence with active agents. Auto-triggered by Pulse agent-guard hook on background agent spawn. |
 
@@ -198,7 +198,7 @@ All endpoints served by the Pulse daemon's observability module (`Observability/
 | `/api/observability/events` | GET | Raw event data | observability |
 | `/api/observability/events` | POST | Push events from hooks | observability |
 | `/api/events/recent` | GET | Merged recent events across all sources | observability |
-| `/api/observability/voice-events` | GET | Voice event log | observability |
+| `/api/observability/voice-events` | GET | Historical voice event log (frozen — no writer since 2026-08-08) | observability |
 | `/api/observability/tool-failures` | GET | Tool failure log | observability |
 
 **Algorithm & Sessions**
@@ -250,13 +250,14 @@ All endpoints served by the Pulse daemon's observability module (`Observability/
 | `/assistant/diary` | GET | Recent diary entries | `Assistant/module.ts` |
 | `/assistant/opinions` | GET | Current DA opinions | `Assistant/module.ts` |
 
-**Voice & Notifications**
+**Notifications**
 
 | Endpoint | Method | Purpose | Source |
 |----------|--------|---------|--------|
-| `/notify` | POST | Send TTS notification via ElevenLabs | `pulse.ts` |
-| `/notify/personality` | POST | Personality-aware notification | `pulse.ts` |
-| `/voice` | GET | Voice status | `pulse.ts` |
+| `/notify` | POST | Send a desktop notification | `Notify.ts` via `pulse.ts` |
+| `/notify/personality` | POST | Legacy compatibility shim — same desktop notification | `Notify.ts` via `pulse.ts` |
+| `/notify/health` | GET | Notify subsystem health | `Notify.ts` via `pulse.ts` |
+| `/voice` | POST | Legacy path alias for `/notify`; no audio | `Notify.ts` via `pulse.ts` |
 
 **Hook Validation**
 

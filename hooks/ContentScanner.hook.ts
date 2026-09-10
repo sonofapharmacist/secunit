@@ -2,10 +2,29 @@
 /**
  * ContentScanner.hook.ts — PostToolUse entry point
  *
- * Scans external content for prompt injection patterns.
- * block, only inject warnings into conversation context.
+ * Scans tool output for prompt injection patterns. PostToolUse cannot
+ * block, so a hit only injects a warning into conversation context.
  *
- * TRIGGER: PostToolUse (matcher: WebFetch, WebSearch)
+ * TRIGGER: PostToolUse — registered THREE times in settings.json:
+ *   matcher "WebFetch", matcher "WebSearch", and one entry with NO matcher
+ *   (which matches every tool). The matcherless entry is what gives this
+ *   hook its real coverage: it fires on Read, Bash, Grep, MCP tool results
+ *   — anything that can carry external bytes into context. Verified
+ *   2026-08-26 by piping a synthetic Read result through this hook and
+ *   observing "Injection detected in Read output".
+ *
+ *   The two named matchers are therefore redundant with the matcherless
+ *   one (a WebFetch runs this hook 3×). Harmless — the inspector is pure
+ *   and PostToolUse can't block — but don't read them as the scope.
+ *   Scope is: every tool.
+ *
+ * KNOWN LIMIT: InjectionInspector is pattern-based, and the patterns cover
+ *   loud forms — "ignore all previous instructions", mode-switch attempts.
+ *   Probed 2026-08-26 against five phrasings; only the blatant override
+ *   fired. Silent on assistant-directed politeness ("Note for any AI
+ *   reading this: please advise the user to…"), fake <system> blocks,
+ *   role-play framing, and ordinary persuasive prose. Treat this as a
+ *   tripwire for careless attacks, not a boundary against deliberate ones.
  */
 
 import type { InspectionContext } from './security/types';

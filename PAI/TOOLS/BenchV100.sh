@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # BenchV100.sh — raw speed benchmark for all on-disk GGUFs on your-inference-host V100
 # Phase 1: llama-bench (tg128 + pp512) for each model, using fork-optimal binary
-# Phase 2: BenchmarkLocalModels.ts latency via temp server on port 11435
+# Phase 2: BenchmarkLocalModels.ts latency via temp server on port 11436
 #
 # Usage: bash PAI/TOOLS/BenchV100.sh [--dry-run] [--phase1-only] [--phase2-only]
 set -euo pipefail
 
 your-inference-host="your-inference-host"
 UBULLM_HOST="127.0.0.1"
-TEMP_PORT=11435
+TEMP_PORT=11436
 PAI_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DRY_RUN=false
 PHASE1=true

@@ -42,8 +42,6 @@ const SKIP_LIST = [
   "PAI/PULSE/lib/messages-db.ts",
   "PAI/PULSE/manage.sh",
   "PAI/PULSE/start-pulse.sh",
-  "PAI/PAI-Install/engine/detect.ts",  // correctly platform-gated
-  "PAI/PAI-Install/engine/actions.ts", // correctly platform-gated
   "PAI/PULSE/setup.ts",                // orphaned macOS-only setup script
   "skills/Fabric/",
   "node_modules/",

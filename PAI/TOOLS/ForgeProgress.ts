@@ -6,20 +6,26 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 
-type Args = { slug: string; prompt?: string; model: string; effort: string; sandbox: string; timeoutMs: number; pulseUrl: string };
+type Args = { slug: string; prompt?: string; model: string; effort: string; sandbox: string; timeoutMs: number; pulseUrl: string; fallbackModel: string; noFallback: boolean };
 type JsonRecord = Record<string, unknown>;
 type RingEntry = { raw: JsonRecord; type: string };
 type RunState = { startMs: number; childAlive: boolean; timedOut: boolean; interrupted: boolean };
 type ExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
 type TimeoutControl = { clearNaturalExit: () => void; clearAll: () => void };
 type SignalControl = { clear: () => void };
-type Paths = { eventsFile: string; finalFile: string };
-type FinalInput = { verdict: "success" | "error" | "timeout"; exitCode: number | null; eventsFile: string; finalFile: string; durationMs: number; finalMessage: string };
+type Paths = { eventsFile: string; finalFile: string; orEventsFile: string; orFinalFile: string };
+type PathKind = "codex" | "openrouter-fallback";
+type FinalInput = { verdict: "success" | "error" | "timeout" | "unavailable"; exitCode: number | null; eventsFile: string; finalFile: string; durationMs: number; finalMessage: string; path: PathKind; fallbackReason?: string };
+type OrRunResult = { exitCode: number | null; stdoutJson: JsonRecord | null; fallbackReason: string };
+type OrFinalPair = { result: OrRunResult; finalInput: FinalInput };
 const RING_SIZE = 5;
 const PULSE_TIMEOUT_MS = 2000;
 const ESCALATE_MS = 5000;
+const STDERR_SAMPLE_CAP = 4096;
+const UPSTREAM_FAILURE_PATTERN = /HTTP 5\d\d|model_not_found|upstream_error|manifest/i;
+const OR_HELPER_REL = join(".claude", "PAI", "TOOLS", "ForgeOpenRouter.ts");
 function parseArgs(argv: string[]): Args {
-  const args: Partial<Args> = { model: "gpt-5.4", effort: "high", sandbox: "workspace-write", timeoutMs: 300000, pulseUrl: "http://localhost:31337/notify" };
+  const args: Partial<Args> = { model: "gpt-5.4", effort: "high", sandbox: "workspace-write", timeoutMs: 300000, pulseUrl: "http://localhost:31337/notify", fallbackModel: "openai/gpt-5.4-codex", noFallback: false };
   const seen = new Set<string>();
   const valueFor = (flag: string, inline: string | undefined, index: number): [string, number] => {
     if (inline !== undefined) return [inline, index];
@@ -30,6 +36,7 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     if (!token.startsWith("--")) throw new Error(`unexpected positional argument: ${token}`);
+    if (token === "--no-fallback") { if (seen.has("--no-fallback")) throw new Error(`duplicate flag: --no-fallback`); seen.add("--no-fallback"); args.noFallback = true; continue; }
     const eq = token.indexOf("="), flag = eq === -1 ? token : token.slice(0, eq), inline = eq === -1 ? undefined : token.slice(eq + 1);
     if (seen.has(flag)) throw new Error(`duplicate flag: ${flag}`);
     seen.add(flag);
@@ -42,6 +49,7 @@ function parseArgs(argv: string[]): Args {
       case "--sandbox": args.sandbox = nonEmpty(flag, value); break;
       case "--timeout-ms": args.timeoutMs = positiveInt(flag, value); break;
       case "--pulse-url": args.pulseUrl = validUrl(flag, value); break;
+      case "--fallback-model": args.fallbackModel = nonEmpty(flag, value); break;
       default: throw new Error(`unknown flag: ${flag}`);
     }
   }
@@ -66,10 +74,43 @@ function preflightCodex(home: string): string | null {
   try { accessSync(codexPath, constants.X_OK); return codexPath; }
   catch (_error: unknown) { return null; } // Safe: caller emits the exact unavailable JSON.
 }
+async function tryOpenRouterFallback(home: string, args: Args, paths: Paths, prompt: string, fallbackStartMs: number): Promise<OrFinalPair> {
+  const orHelper = join(home, OR_HELPER_REL);
+  void sendNotify(args.pulseUrl, { message: `Forge: codex failed; falling back to OpenRouter (${args.fallbackModel})`, voice_enabled: false, agent: "Forge", slug: args.slug, phase: "FORGE" });
+  const child = spawn("bun", [orHelper, "--slug", args.slug, "--model", args.fallbackModel, "--timeout-ms", String(args.timeoutMs), "--pulse-url", args.pulseUrl], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdoutBuf = "", stderrBuf = "";
+  child.stdout.on("data", (chunk: Buffer | string) => (stdoutBuf += typeof chunk === "string" ? chunk : chunk.toString("utf8")));
+  child.stderr.on("data", (chunk: Buffer | string) => (stderrBuf += typeof chunk === "string" ? chunk : chunk.toString("utf8")));
+  child.stdin.on("error", (_err: unknown) => { /* EPIPE if ForgeOpenRouter exited before we wrote; harmless — final line still parses. */ });
+  child.stdin.write(prompt);
+  child.stdin.end();
+  return await new Promise<OrFinalPair>((resolve) => {
+    child.on("error", (err: Error) => {
+      const fallbackReason = `spawn_error: ${err.message}`;
+      resolve({ result: { exitCode: null, stdoutJson: null, fallbackReason }, finalInput: { verdict: "error", exitCode: null, eventsFile: paths.orEventsFile, finalFile: paths.orFinalFile, durationMs: Date.now() - fallbackStartMs, finalMessage: "", path: "openrouter-fallback", fallbackReason } });
+    });
+    child.on("close", (code: number | null) => {
+      const durationMs = Date.now() - fallbackStartMs;
+      const trimmed = stdoutBuf.trim();
+      let parsed: JsonRecord | null = null;
+      if (trimmed.length > 0) {
+        try { parsed = asRecord(JSON.parse(trimmed)); } catch (_error: unknown) { /* leave null; emit error verdict */ }
+      }
+      const orVerdict = typeof parsed?.["verdict"] === "string" ? parsed["verdict"] as string : "";
+      const verdict: FinalInput["verdict"] = orVerdict === "success" ? "success" : orVerdict === "timeout" ? "timeout" : "error";
+      const finalMessage = typeof parsed?.["final_message"] === "string" ? parsed["final_message"] as string : "";
+      const fallbackReason = typeof parsed?.["reason"] === "string" ? parsed["reason"] as string
+        : code !== 0 ? `exit_${code ?? "null"}`
+        : trimmed.length === 0 ? `no_output: ${stderrBuf.slice(0, 200)}`
+        : "unknown";
+      resolve({ result: { exitCode: code, stdoutJson: parsed, fallbackReason }, finalInput: { verdict, exitCode: code, eventsFile: paths.orEventsFile, finalFile: paths.orFinalFile, durationMs, finalMessage, path: "openrouter-fallback", fallbackReason } });
+    });
+  });
+}
 async function ensureSlugDir(home: string, slug: string): Promise<Paths> {
   const slugDir = join(home, ".claude", "PAI", "MEMORY", "WORK", slug);
   await mkdir(slugDir, { recursive: true }); // Local artifact I/O is unbounded so errors can surface naturally.
-  return { eventsFile: join(slugDir, "forge-events.jsonl"), finalFile: join(slugDir, "forge-final.txt") };
+  return { eventsFile: join(slugDir, "forge-events.jsonl"), finalFile: join(slugDir, "forge-final.txt"), orEventsFile: join(slugDir, "forge-or-events.jsonl"), orFinalFile: join(slugDir, "forge-or-final.txt") };
 }
 async function readPrompt(prompt: string | undefined): Promise<string> {
   if (prompt !== undefined) return prompt;
@@ -217,30 +258,48 @@ async function readFinalMessage(finalFile: string): Promise<string> {
   return await readFile(finalFile, "utf8"); // Local final artifact read is intentionally unbounded.
 }
 function formatFinalLine(input: FinalInput): string {
-  return JSON.stringify({ verdict: input.verdict, exit_code: input.exitCode, events_file: input.eventsFile, final_file: input.finalFile, duration_ms: input.durationMs, final_message: input.finalMessage });
+  const base: JsonRecord = { verdict: input.verdict, exit_code: input.exitCode, events_file: input.eventsFile, final_file: input.finalFile, duration_ms: input.durationMs, final_message: input.finalMessage, path: input.path };
+  if (input.fallbackReason !== undefined) base.fallback_reason = input.fallbackReason;
+  return JSON.stringify(base);
 }
 export default async function main(argv: string[]): Promise<number> {
   try {
     const args = parseArgs(argv), home = homeDir(), codexPath = preflightCodex(home);
-    if (!codexPath) { process.stdout.write('{"verdict":"unavailable","reason":"codex CLI not found at ~/.bun/bin/codex"}\n'); return 2; }
+    if (!codexPath) { process.stdout.write(`${formatFinalLine({ verdict: "unavailable", exitCode: 2, eventsFile: "", finalFile: "", durationMs: 0, finalMessage: "", path: "codex", fallbackReason: "codex CLI not found at ~/.bun/bin/codex" })}\n`); return 2; }
     const prompt = await readPrompt(args.prompt);
     if (prompt.length === 0) throw new Error("no prompt provided; pass --prompt or pipe stdin data");
     const paths = await ensureSlugDir(home, args.slug), state: RunState = { startMs: Date.now(), childAlive: true, timedOut: false, interrupted: false }, ring: RingEntry[] = [];
     const child = spawnCodex(codexPath, args, paths.finalFile, prompt);
-    child.stderr.pipe(process.stderr);
+    // Tee stderr: keep user-visible mirror AND keep a capped sample for upstream-failure detection.
+    let stderrSample = "";
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      stderrSample = (stderrSample + text).slice(-STDERR_SAMPLE_CAP);
+      process.stderr.write(chunk);
+    });
     const cleanupPoller = startProgressPoller(ring, args), timeoutControl = wireTimeout(child, state, args, cleanupPoller), signalControl = wireSignals(child, state, timeoutControl, cleanupPoller);
     let stdoutError: Error | null = null;
     const stdoutTask = wireStdout(child, paths.eventsFile, ring, args).catch((error: unknown) => { stdoutError = error instanceof Error ? error : new Error(String(error)); console.error(`ForgeProgress: stdout wiring failed: ${String(error)}`); sendChildSignal(child, "SIGTERM", "stdout failure"); });
     const exitInfo = await waitForChild(child);
     state.childAlive = false; timeoutControl.clearNaturalExit(); cleanupPoller(); signalControl.clear(); await stdoutTask;
-    const durationMs = Date.now() - state.startMs;
-    void sendNotify(args.pulseUrl, { message: `Forge: codex complete (${durationMs}ms, exit ${exitInfo.code})`, voice_enabled: false, agent: "Forge", slug: args.slug });
+    const codexDurationMs = Date.now() - state.startMs;
+    void sendNotify(args.pulseUrl, { message: `Forge: codex complete (${codexDurationMs}ms, exit ${exitInfo.code})`, voice_enabled: false, agent: "Forge", slug: args.slug });
     if (exitInfo.error) console.error(`ForgeProgress: codex spawn failed: ${exitInfo.error.message}`);
-    const finalMessage = await readFinalMessage(paths.finalFile);
-    const verdict: "success" | "error" | "timeout" = state.timedOut ? "timeout" : exitInfo.code === 0 && !stdoutError && !exitInfo.error && !state.interrupted ? "success" : "error";
-    const exitCode = verdict === "timeout" ? null : exitInfo.code;
-    process.stdout.write(`${formatFinalLine({ verdict, exitCode, eventsFile: paths.eventsFile, finalFile: paths.finalFile, durationMs, finalMessage })}\n`);
-    return verdict === "success" ? 0 : 1;
+    const codexFinalMessage = await readFinalMessage(paths.finalFile);
+    const codexVerdict: "success" | "error" | "timeout" = state.timedOut ? "timeout" : exitInfo.code === 0 && !stdoutError && !exitInfo.error && !state.interrupted ? "success" : "error";
+    const upstreamFailure = UPSTREAM_FAILURE_PATTERN.test(stderrSample);
+    const shouldFallback = args.noFallback === false && codexVerdict !== "success";
+    if (!shouldFallback) {
+      const exitCode = codexVerdict === "timeout" ? null : exitInfo.code;
+      process.stdout.write(`${formatFinalLine({ verdict: codexVerdict, exitCode, eventsFile: paths.eventsFile, finalFile: paths.finalFile, durationMs: codexDurationMs, finalMessage: codexFinalMessage, path: "codex" })}\n`);
+      return codexVerdict === "success" ? 0 : 1;
+    }
+    // Cascade to OpenRouter. The upstreamFailure flag is informational for the notify message; the cascade fires regardless of cause.
+    void sendNotify(args.pulseUrl, { message: `Forge: codex ${codexVerdict}${upstreamFailure ? " (upstream)" : ""}; falling back to OpenRouter`, voice_enabled: false, agent: "Forge", slug: args.slug, phase: "FORGE" });
+    const fallbackStartMs = Date.now();
+    const orPair = await tryOpenRouterFallback(home, args, paths, prompt, fallbackStartMs);
+    process.stdout.write(`${formatFinalLine(orPair.finalInput)}\n`);
+    return orPair.finalInput.verdict === "success" ? 0 : 1;
   } catch (error: unknown) { console.error(`ForgeProgress: ${String(error)}`); return 1; }
 }
 if (import.meta.main) {

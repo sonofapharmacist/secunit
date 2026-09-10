@@ -82,6 +82,15 @@ Do not improvise an algorithm format. The file is the spec.
 Load these on demand. Only this file and what it `@`-imports are read at every session start —
 keeping that set small is what keeps sessions fast.
 
+## Your first session
+
+Four things are running that a bare Claude Code session does not have: **modes** (reply
+shape scales with the ask — see above), **memory** (facts and outcomes persist to disk in
+`MEMORY/` and are retrieved by keyword next session), **skills** (playbooks in `skills/` that
+activate on trigger phrases), and **gates** (hooks that inspect every tool call before it
+runs and every fetched page before it lands in context; blocks are loud). The README's
+"Your first ten minutes" has one prompt for each. `/interview` is optional depth, not setup.
+
 ## Making it yours
 
 This file is a starting point, not a contract. The rules above are the ones that survived

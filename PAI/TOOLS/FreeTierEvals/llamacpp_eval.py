@@ -909,6 +909,114 @@ def build_c8_prompt() -> str:
     return C8_PROMPT_TEMPLATE.replace("__CACHE_STUB__", CACHE_STUB).replace("__CACHE_TESTS__", CACHE_TESTS)
 
 
+def _trim_trailing_prose(code: str) -> str:
+    """Cut unfenced code at the LAST point brace depth returns to 0 — some
+    models (e.g. Devstral-2-123B) append a plain-prose explanation after a
+    syntactically complete class body with no fence separating the two,
+    which otherwise gets fed to the compiler as one blob and fails with a
+    spurious parse error deep in the prose. Must use the last zero-crossing,
+    not the first — TS code legitimately has multiple top-level `{...}`
+    blocks (type aliases, interfaces) before the final class/function body,
+    and cutting at the first one discards everything after it.
+
+    Lexer-aware, not a raw character scan: a naive brace count desyncs on any
+    `{`/`}` inside a string, template literal, or comment (e.g. `throw new
+    Error("expected }")`, a `// } like this` comment, or a `` `${x}` ``
+    template interpolation, which nets to balanced but a lone literal brace
+    inside a template segment would not). Caught during a dual-model review
+    (Cato/Devstral/MiniMax M3 independently, 2026-08-07) of the first,
+    character-only version of this function — MiniMax M3 additionally found
+    that a stray unbalanced `}` inside a string near the tail could send depth
+    negative, after which the real closing brace only returns depth to 0 for
+    the FIRST time, silently reproducing the exact bug this function exists to
+    fix. This version tracks lexer state so only structural braces count."""
+    depth = 0
+    seen_open = False
+    last_zero_at = None
+    state = "code"  # code | sq | dq | template | line_comment | block_comment
+    i = 0
+    n = len(code)
+    while i < n:
+        ch = code[i]
+        nxt = code[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if ch == "/" and nxt == "/":
+                state = "line_comment"
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                state = "block_comment"
+                i += 2
+                continue
+            if ch == "'":
+                state = "sq"
+            elif ch == '"':
+                state = "dq"
+            elif ch == "`":
+                state = "template"
+            elif ch == "{":
+                depth += 1
+                seen_open = True
+            elif ch == "}":
+                depth -= 1
+                if seen_open and depth == 0:
+                    last_zero_at = i
+            i += 1
+        elif state == "line_comment":
+            if ch == "\n":
+                state = "code"
+            i += 1
+        elif state == "block_comment":
+            if ch == "*" and nxt == "/":
+                state = "code"
+                i += 2
+                continue
+            i += 1
+        elif state in ("sq", "dq"):
+            if ch == "\\":
+                i += 2  # skip escaped char, e.g. \' or \" — can't close the string
+                continue
+            if (state == "sq" and ch == "'") or (state == "dq" and ch == '"'):
+                state = "code"
+            i += 1
+        elif state == "template":
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "`":
+                state = "code"
+                i += 1
+                continue
+            if ch == "$" and nxt == "{":
+                # `${...}` interpolation is real code — braces inside it are
+                # structural and must count, so drop back to "code" state for
+                # the interpolation body and track its own nesting depth to
+                # know when to return to "template" state.
+                interp_depth = 1
+                i += 2
+                while i < n and interp_depth > 0:
+                    c2 = code[i]
+                    if c2 == "{":
+                        interp_depth += 1
+                        depth += 1
+                        seen_open = True
+                    elif c2 == "}":
+                        interp_depth -= 1
+                        if interp_depth == 0:
+                            depth -= 1
+                            if seen_open and depth == 0:
+                                last_zero_at = i
+                            i += 1
+                            break
+                        depth -= 1
+                        if seen_open and depth == 0:
+                            last_zero_at = i
+                    i += 1
+                continue
+            i += 1
+    return code[: last_zero_at + 1] if last_zero_at is not None else code
+
+
 # Source: coding_battery.py:L1014-1024
 def extract_code_block(response: str) -> str:
     m = re.search(r'```(?:typescript|ts)\n(.*?)```', response, re.DOTALL)
@@ -917,6 +1025,17 @@ def extract_code_block(response: str) -> str:
     m = re.search(r'```\n(.*?)```', response, re.DOTALL)
     if m:
         return m.group(1).strip()
+    # No fence at all — some models (e.g. Coder-Next) answer with a plain-prose
+    # preamble followed by unfenced code. Cut at the first line that looks like
+    # the start of a TS statement rather than feeding the whole response
+    # (prose included) to the compiler. Keyword set extended 2026-08-07 (MiniMax
+    # M3 dual-review finding) — the original set (export/import/class/function/
+    # type/interface/const/let) missed enum/declare/namespace/abstract/async/
+    # var/await, so a model leading with any of those fell through to the
+    # original whole-response bug this function exists to fix.
+    code_start = re.search(r'^\s*(export|import|class|function|type|interface|const|let|enum|declare|namespace|abstract|async|var|await)\b', response, re.MULTILINE)
+    if code_start:
+        return _trim_trailing_prose(response[code_start.start():].strip())
     return response.strip()
 
 
@@ -956,6 +1075,12 @@ def run_c8(response: str) -> tuple[int, list[str]]:
             passed = out.count('✓') + len(re.findall(r'\bpassed\b', out))
             failed = out.count('✗') + len(re.findall(r'\bfailed\b', out))
         notes.append(f"vitest: {passed} passed, {failed} failed")
+        # Persist full diagnostics — vitest's real stdout/stderr and the exact
+        # code that was tested were previously discarded, leaving only the
+        # pass/fail count with no way to tell a compile error from a real
+        # assertion failure after the fact.
+        notes.append(f"VITEST_RAW_OUTPUT:{out}")
+        notes.append(f"TESTED_CODE:{code}")
         if failed == 0 and passed >= 7:
             any_count = len(re.findall(r':\s*any\b|<any>|as\s+any', code))
             if any_count > 0:
@@ -995,6 +1120,27 @@ MODELS = {
         "max_tokens": 8192,
         "temperature": 0,
         "is_reasoning": True,   # MoE, may emit reasoning_content
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "gptOss120b": {
+        "name": "OpenAI GPT-OSS-120B (ubullm, unsloth Q4_K_M, eviction-mode 60GB)",
+        "model": "gpt-oss-120b",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,   # MoE, may emit reasoning_content
+        "fence_strip": True,
+        "type_filter": True,
+        # gpt-oss models use harmony chat template with reasoning; reasoning_min_tokens
+        # matches gptOss20b pattern above. R2 STRIDE was the long-reasoning canary
+        # for gpt-oss-20b; expect same behavior on -120b.
+    },
+    "kimiLinear48bA3b": {
+        "name": "Kimi-Linear-48B-A3B (ubullm, bartowski IQ4_XS, eviction-mode 26GB)",
+        "model": "kimi-linear-48b-a3b",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": False,  # hybrid linear-attention; no reasoning trace observed yet
         "fence_strip": True,
         "type_filter": True,
     },
@@ -1049,9 +1195,293 @@ MODELS = {
         "fence_strip": True,
         "type_filter": False,
     },
+    # ═══ 2026-08-08 alongside-prod + eviction-mode batch (this run) ═══
+    "gemma4_12b_it_qat": {
+        "name": "gemma-4-12B-it-qat-UD-Q4_K_XL (ubullm, alongside-prod, MTP-capable)",
+        "model": "gemma4_12b_qat",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "gemma4_12b_coder_fable5": {
+        "name": "gemma-4-12B-coder-fable5-composer2.5-v1 Q4_K_M (ubullm, alongside-prod)",
+        "model": "gemma4_12b_coder_fable5",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "xgemable_12b_coder": {
+        "name": "xGemable-12B-coder-v1.5 Q4_K_M (ubullm, alongside-prod)",
+        "model": "xgemable_12b_coder",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "jackrong_v4_pro_qwen35_9b_mtp": {
+        "name": "Jackrong DeepSeek-V4-Pro-Qwen3.5-9B-MTP IQ4_XS (ubullm, V4 distill, MTP)",
+        "model": "jackrong_v4_mtp",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": True,  # MTP speculative-decoding model, may emit reasoning trace
+        "reasoning_min_tokens": 4096,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "deepseek_r1_distill_qwen32b": {
+        "name": "DeepSeek-R1-Distill-Qwen-32B Q5_K_M (bartowski, ubullm, R1 reasoning distilled into Qwen2.5-32B)",
+        "model": "deepseek_r1_distill_qwen32b",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,  # R1-distill emits chain-of-thought in reasoning_content (verified ISC-5)
+        "reasoning_min_tokens": 12000,  # R1-distill-Qwen-32B traces routinely exceed 8K tokens
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "unsloth_qwen35_9b_mtp": {
+        "name": "unsloth Qwen3.5-9B-MTP IQ4_XS (ubullm, V4 distill lineage, MTP)",
+        "model": "unsloth_v4_mtp",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": True,
+        "reasoning_min_tokens": 4096,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "kat_coder_v25_apex": {
+        "name": "KAT-Coder-V2.5-Dev-APEX-Compact (ubullm, eviction-mode, 132K dl)",
+        "model": "kat_coder_v25_apex",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "ornith_35b_q4km": {
+        "name": "Ornith-1.0-35B-Instruct Q4_K_M (ubullm, eviction-mode)",
+        "model": "ornith_35b_q4km",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "qwopus_35b_mtp": {
+        "name": "Qwopus3.6-35B-A3B-Coder-MTP Q4_K_M (ubullm, eviction-mode, MTP)",
+        "model": "qwopus_35b_mtp",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": True,
+        "reasoning_min_tokens": 8192,  # 35B-A3B needs more reasoning headroom
+        "fence_strip": True,
+        "type_filter": False,
+    },
     "qwen3_30b_a3b": {
         "name": "Qwen3-30B-A3B-Instruct-2507 (ubullm, IQ4_XS)",
         "model": "qwen3:30b-a3b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "museGlimmer30b": {
+        "name": "Meta Muse Glimmer 30B (ubullm, K-Quant-17GB, dense+vision, one-shot test)",
+        "model": "muse-glimmer-30b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "museGlimmer30bKquantDynamic": {
+        "name": "Meta Muse Glimmer 30B (ubullm, K-Quant-Dynamic 19.7GB, Meta-recommended sampler temp=1/top_p=0.95/top_k=64 set server-side)",
+        "model": "museGlimmer30bKquantDynamic",
+        "max_tokens": 4096,
+        "temperature": 1,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "museGlimmer30bKquantDynamicServerDefault": {
+        "name": "Meta Muse Glimmer 30B (ubullm, K-Quant-Dynamic 19.7GB, llama-server documented defaults temp=0.8/top_p=0.95/top_k=40 set explicitly since harness always sends a temperature field)",
+        "model": "museGlimmer30bKquantDynamicServerDefault",
+        "max_tokens": 4096,
+        "temperature": 0.8,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "coder_next": {
+        "name": "Qwen3-Coder-Next (ubullm, Q4_K_M, dual-GPU, 80B-A3B)",
+        "model": "coder-next",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "qwen38_27b": {
+        "name": "Qwen3.8-27B (ubullm, unsloth UD-Q4_K_XL, dense, alongside-prod)",
+        "model": "qwen38_27b",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        # Measured 2026-08-14: always emits reasoning_content, even on a trivial
+        # one-line prompt (230 tokens for "please paste the code"). First bench pass
+        # with is_reasoning=False scored R3/R5/R6 as 0/0/0 with raw="" and real
+        # tok/s logged — the trace was silently eating the whole max_tokens budget
+        # (1200-1500 on those three) before any content could be emitted. Same Qwen
+        # dense-27B lineage as qwen36_27b above; borrowing its 16000 floor as the
+        # starting point pending its own measurement of a worst-case trace length.
+        "reasoning_min_tokens": 16000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "qwen38_27b_q8": {
+        "name": "Qwen3.8-27B (ubullm, unsloth Q8_0, dense, quant-comparison)",
+        "model": "qwen38_27b_q8",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        # Same config as qwen38_27b (UD-Q4_K_XL) — added 2026-08-15 as part of the
+        # scope-creep regression campaign testing whether the R3/R5/C1/C2/C6
+        # empty-content/finish_reason:length signature is quant-specific. Borrowing
+        # the identical reasoning_min_tokens floor for an apples-to-apples
+        # comparison against the Q4 baseline.
+        # reasoning_timeout_s bumped 900 2026-08-15 — measured C1/C2/C6 at Q8_0
+        # taking 703-705s (vs Q4's ~524s for the identical 16000-token ceiling;
+        # same bug, slower per-token at higher precision). 600s would truncate
+        # a genuine-but-slow completion and misreport it as a harness timeout
+        # error rather than the real empty-content/finish_reason:length result.
+        "reasoning_min_tokens": 16000,
+        "reasoning_timeout_s": 900,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "qwen38_27b_bf16": {
+        "name": "Qwen3.8-27B (ubullm, unsloth BF16 full precision, dense, quant-comparison)",
+        "model": "qwen38_27b_bf16",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        # Same config as qwen38_27b (UD-Q4_K_XL) — see qwen38_27b_q8 above for
+        # rationale. Full-precision BF16 comparison point for the same campaign.
+        # reasoning_timeout_s bumped 1300 2026-08-15 — measured C1/C2/C6 at BF16
+        # taking 1095-1096s for the identical 16000-token ceiling (same bug,
+        # slowest per-token throughput of the three quants). See qwen38_27b_q8
+        # comment above for why an under-provisioned timeout corrupts the result.
+        "reasoning_min_tokens": 16000,
+        "reasoning_timeout_s": 1300,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "coder_next_q4km_unrecorded": {
+        "name": "Qwen3-Coder-Next (ubullm, Q4_K_M, dual-GPU, 80B-A3B, unrecorded variant — file Qwen3-Coder-Next-Q4_K_M.gguf 48.5GB on disk, NOT the live IQ4_NL prod)",
+        "model": "coder-next",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        "reasoning_min_tokens": 16000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "glm45air": {
+        "name": "GLM-4.5-Air (ubullm, UD-IQ2_XXS, dual-GPU, 110B-A12B)",
+        "model": "glm45air",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,  # confirmed via sanity check: emits reasoning_content, burns full budget on thinking at low max_tokens
+        # Measured: R5 exhausted 8000 AND 16000 tokens on reasoning alone, never reached
+        # content (finish_reason: "length", content stays ""). Bumped 16000 -> 32000
+        # 2026-08-07 per GP's direct observation that this model (and glm47flash) were
+        # not finishing reasoning-heavy tasks at EITHER 8K or 16K — confirms this is a
+        # genuine slow/verbose-reasoner pattern on this hardware, not a one-off IQ2
+        # quant fluke. Paired with reasoning_timeout_s below since 32K reasoning tokens
+        # can exceed the default 180s LLAMACPP_TIMEOUT on V100 well before hitting the
+        # token ceiling — conflating the two knobs is what caused this to look like a
+        # capability collapse in the first bench round instead of a starved budget.
+        "reasoning_min_tokens": 32000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "glm45air_q3kxl": {
+        "name": "GLM-4.5-Air (ubullm, Q3_K_XL, dual-GPU, 110B-A12B, larger quant than glm45air's UD-IQ2_XXS)",
+        "model": "glm45air_q3kxl",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        # Added 2026-08-15 as part of the Qwen3.8-27B scope-creep campaign's follow-up:
+        # the greedy-sampling "empty content" pattern found on glm45air/glm47flash was
+        # root-caused as a greedy-decoding pathology (same mechanism found in Qwen3.8),
+        # not a genuine GLM-family capability gap. glm47flash confirmed 39/53 -> 47/53
+        # under Unsloth's recommended sampler. Testing whether the same fix applies to
+        # this larger 110B-A12B sibling at its largest quant that fits ubullm's 64GB
+        # pool with full -c 32768 headroom (Q3_K_XL, 56.45GB — Q4-class quants were
+        # ruled out at ~0-3GB headroom, too tight for the full context this campaign
+        # needs). Same reasoning_min_tokens/timeout as glm45air (same architecture).
+        "reasoning_min_tokens": 32000,
+        "reasoning_timeout_s": 900,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "glm47flash": {
+        "name": "GLM-4.7-Flash (ubullm, UD-Q4_K_XL, dual-GPU, 30B-A3B)",
+        "model": "glm47flash",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,  # confirmed via sanity check: emits reasoning_content
+        # reasoning_min_tokens REMOVED then RESTORED 2026-08-07. First removed on a
+        # dual-model review finding (Cato/Devstral/MiniMax M3) that 16000 was copied
+        # from glm45air without its own measurement. Restored at 32000 (higher than
+        # the original 16000) per GP's direct observation that this model was ALSO not
+        # finishing reasoning-heavy tasks at 8K or 16K, same pattern as glm45air — so
+        # the original floor wasn't wrong, it was under-measured, and the real ceiling
+        # is higher than either prior guess. Paired with a longer reasoning_timeout_s
+        # so the harness doesn't cut the model off before it can spend the budget.
+        "reasoning_min_tokens": 32000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "glm45air_iq2m": {
+        "name": "GLM-4.5-Air (ubullm, UD-IQ2_M, dual-GPU, 110B-A12B, less aggressive quant)",
+        "model": "glm45air-iq2m",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        # reasoning_min_tokens bumped to 32000 2026-08-07, matching glm45air/glm47flash
+        # — same underlying 110B-A12B architecture as glm45air (just a less aggressive
+        # IQ2_M quant), and the same non-completion pattern was directly observed
+        # across both other GLM entries at 8K/16K. Not independently re-measured on
+        # THIS quant specifically, but the shared-architecture inference is now backed
+        # by two confirmed data points instead of zero. See reasoning_timeout_s below.
+        "reasoning_min_tokens": 32000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "devstral_small2": {
+        "name": "Devstral Small 2 (ubullm, UD-Q4_K_XL, dual-GPU, 24B dense)",
+        "model": "devstral-small2",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "devstral2_123b": {
+        "name": "Devstral-2-123B (ubullm, UD-IQ3_XXS, dual-GPU, 125B dense-ish, ~8.6 tok/s)",
+        "model": "devstral2-123b",
         "max_tokens": 4096,
         "temperature": 0,
         "is_reasoning": False,
@@ -1091,6 +1521,28 @@ MODELS = {
         "max_tokens": 4096,
         "temperature": 0,
         "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "nemotron35Lightning30b": {
+        "name": "NVIDIA Nemotron-3.5-Lightning-30B-A3B (ubullm, Q4_K_M via Ollama blob extraction, Mamba-2+MoE+Attention hybrid, nemotron_h arch)",
+        "model": "nemotron35Lightning30b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": True,  # emits full CoT in reasoning_content, verified via direct probe: C1 prompt at max_tokens=2500 hit finish_reason=length with content="" and reasoning_content=9244 chars, never reached the answer
+        "reasoning_min_tokens": 12000,  # matches deepseek_r1_distill_qwen32b's floor as a starting point — traces observed running long on non-trivial prompts
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "thinkingCapQwen36_27b": {
+        "name": "BottleCap AI ThinkingCap-Qwen3.6-27B (ubullm, Q4_K_M, RL post-trained for reasoning brevity, tool calling verified working)",
+        "model": "thinkingCapQwen36_27b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": True,  # emits reasoning_content like base Qwen3.6; direct probe showed a SHORT trace (74 total completion tokens on a tool-call task) consistent with the model's claimed brevity — is_reasoning still True so the harness correctly parses the reasoning/content split, but reasoning_min_tokens left at a moderate default given the observed brevity
+        "reasoning_min_tokens": 6000,  # half of the deepseek_r1_distill/nemotron floor — probe evidence suggests much shorter traces for this model
+        "reasoning_timeout_s": 400,
         "fence_strip": True,
         "type_filter": False,
     },
@@ -1174,6 +1626,66 @@ MODELS = {
         "fence_strip": True,
         "type_filter": False,
     },
+    # ─── 2026-08-07 batch: 64GB-fits candidates ────────────────────────────────
+    "apriel_15b_thinker": {
+        "name": "Apriel-1.5-15b-Thinker (ubullm, UD-Q4_K_XL, 15B dense, thinking mode)",
+        "model": "apriel_15b_thinker",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        "reasoning_min_tokens": 16000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    "gemma_3_27b": {
+        "name": "gemma-3-27b-it (ubullm, Q4_K_M, 27B dense)",
+        "model": "gemma_3_27b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "glm4_32b": {
+        "name": "GLM-4-32B-0414 (ubullm, Q4_K_M, 32B dense)",
+        "model": "glm4_32b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "seed_oss_36b": {
+        "name": "Seed-OSS-36B-Instruct (ubullm, Q4_K_M, 36B dense)",
+        "model": "seed_oss_36b",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
+    "qwen3_next_80b_a3b": {
+        "name": "Qwen3-Next-80B-A3B-Instruct (ubullm, IQ4_NL, 80B-A3B MoE)",
+        "model": "qwen3_next_80b_a3b",
+        "max_tokens": 8192,
+        "temperature": 0,
+        "is_reasoning": True,
+        "reasoning_min_tokens": 16000,
+        "reasoning_timeout_s": 600,
+        "fence_strip": True,
+        "type_filter": True,
+    },
+    # Alias for the bench wrapper — points at the existing devstral_small2 MODELS entry.
+    "devstral_small_2_24b": {
+        "name": "Devstral Small 2 (ubullm, UD-Q4_K_XL, dual-GPU, 24B dense)",
+        "model": "devstral-small2",
+        "max_tokens": 4096,
+        "temperature": 0,
+        "is_reasoning": False,
+        "fence_strip": True,
+        "type_filter": False,
+    },
 }
 
 BASE_URL = os.environ.get("LLAMACPP_BASE_URL", "http://100.126.185.104:11434/v1/chat/completions")
@@ -1186,23 +1698,55 @@ TIMEOUT = int(os.environ.get("LLAMACPP_TIMEOUT", "180"))
 # Authorization header dropped (llama-server has no auth).
 # ════════════════════════════════════════════════════════════════════════════════
 
-def call_local(cfg, prompt, max_tokens_override=None, tools=None, messages_override=None):
-    """Returns (content_or_TOOL_CALLED, elapsed, err)."""
+def call_local(cfg, prompt, max_tokens_override=None, tools=None, messages_override=None, sampler_override=None):
+    """Returns (content_or_TOOL_CALLED, elapsed, err, tps).
+
+    tps is {"predicted_per_second": float|None, "prompt_per_second": float|None}
+    pulled from llama-server's response.timings block — None on any error path
+    or if the server omits timings (e.g. non-llama.cpp backend).
+
+    sampler_override (dict|None) — optional per-request sampler field overrides applied
+    to the OpenAI-compat payload. Keys: temperature, top_p, top_k, min_p,
+    repeat_penalty, presence_penalty, frequency_penalty. Only present keys are
+    added (None values skipped). Defaults to None; caller may pass an empty dict to
+    suppress MODELS-level defaults. Added 2026-08-10 per
+    `PAI/MEMORY/KNOWLEDGE/Research/local-llm-sampler-tuning-2026-08-10.md` so a model
+    can be re-benched under its manufacturer's official sampler config without
+    editing MODELS.
+    """
     # `is not None` (not `or`) — max_tokens_override=0 is a legitimate explicit value,
     # not "unset". The old `or` treated it as falsy and silently substituted cfg["max_tokens"],
     # removing the caller's ability to set a lower budget than the config default.
     base = max_tokens_override if max_tokens_override is not None else cfg["max_tokens"]
-    # Reasoning floor is per-model opt-in via reasoning_min_tokens, not a blanket 16000
-    # for every is_reasoning=True model. Only Qwen3.6 (qwen36_27b/35b_a3b) and
-    # nemotron3_30b_a3b_r have an empirical basis for 16K (see their config comments);
-    # applying that floor to every reasoning model regardless of measurement silently
-    # inflated max_tokens 2-8x for models never shown to need it, shrinking their margin
-    # against LLAMACPP_TIMEOUT on slower hardware. Unlisted reasoning models keep their
-    # own configured max_tokens — no forced floor.
+    # Reasoning floor is per-model opt-in via reasoning_min_tokens, not a blanket value
+    # for every is_reasoning=True model. As of 2026-08-07, models with an empirical basis
+    # for their floor (see their config comments) are: Qwen3.6 (qwen36_27b/35b_a3b) and
+    # nemotron3_30b_a3b_r at 16K, and glm45air/glm47flash/glm45air_iq2m at 32K — the GLM
+    # trio was first set to 16K (glm45air measured, the other two copied without
+    # measurement), found in a dual-model review to be under-documented for two of the
+    # three, then bumped to 32K across all three on GP's direct observation that none of
+    # them were finishing reasoning-heavy tasks at EITHER 8K or 16K. This list is the
+    # source of truth for "is this floor justified" — keep it in sync whenever a
+    # reasoning_min_tokens entry is added, removed, or changed in MODELS above, so a
+    # future session doesn't misread stale text. Applying a floor without measurement
+    # silently inflates max_tokens for models never shown to need it, shrinking their
+    # margin against LLAMACPP_TIMEOUT — which is why a model with a floor this large
+    # should also carry reasoning_timeout_s (see below): a token budget alone doesn't
+    # help if the harness gives up waiting before the model can spend it, and that
+    # exact conflation is what made the GLM trio look like a capability collapse in the
+    # first bench round instead of a starved wall-clock budget. Unlisted reasoning
+    # models keep their own configured max_tokens — no forced floor.
     reasoning_min = cfg.get("reasoning_min_tokens")
     effective_max = max(base, reasoning_min) if reasoning_min else base
     if reasoning_min and base < reasoning_min:
         print(f"  [reasoning floor] {cfg['name']}: requested {base} tokens, raised to {effective_max} (reasoning_min_tokens)", file=sys.stderr)
+
+    # Per-model timeout override, paired with reasoning_min_tokens for models whose
+    # measured token budget is large enough that the default LLAMACPP_TIMEOUT (180s)
+    # would cut the request off before the model can generate up to that budget. Only
+    # set on entries where a larger floor was specifically added for this reason —
+    # unlisted models keep the global TIMEOUT.
+    effective_timeout = cfg.get("reasoning_timeout_s", TIMEOUT)
 
     payload = {
         "model": cfg["model"],
@@ -1214,27 +1758,44 @@ def call_local(cfg, prompt, max_tokens_override=None, tools=None, messages_overr
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
 
+    # Sampler override — apply last so a request can replace MODELS-level defaults.
+    # `is not None` (not truthiness) so 0.0 / 0 are respected as legitimate explicit
+    # values. Unknown keys are silently ignored to keep this safe across llama-server
+    # version drift (newer builds may add fields we don't track here).
+    if sampler_override:
+        for k, v in sampler_override.items():
+            if v is not None and k in {
+                "temperature", "top_p", "top_k", "min_p",
+                "repeat_penalty", "presence_penalty", "frequency_penalty",
+            }:
+                payload[k] = v
+
     data = json.dumps(payload).encode()
     req = urllib.request.Request(BASE_URL, data=data, headers={
         "Content-Type": "application/json",
     })
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             result = json.load(resp)
             elapsed = time.time() - t0
+            timings = result.get("timings") or {}
+            tps = {
+                "predicted_per_second": timings.get("predicted_per_second"),
+                "prompt_per_second": timings.get("prompt_per_second"),
+            }
             choices = result.get("choices", [])
             if not choices:
-                return "", elapsed, "ERR:no_choices"
+                return "", elapsed, "ERR:no_choices", tps
             msg = choices[0].get("message", {})
 
             # Tool call detection — match mistral_eval.py:177-179
             if msg.get("tool_calls"):
-                return "TOOL_CALLED", elapsed, None
+                return "TOOL_CALLED", elapsed, None, tps
 
             content = msg.get("content")
             if content is None:
-                return "", elapsed, f"ERR:content_null:{json.dumps(result)[:150]}"
+                return "", elapsed, f"ERR:content_null:{json.dumps(result)[:150]}", tps
 
             # Type-filter for thinking models (gpt-oss-20b, Qwen3.6 reasoning)
             if isinstance(content, list):
@@ -1268,24 +1829,112 @@ def call_local(cfg, prompt, max_tokens_override=None, tools=None, messages_overr
                       f"model configured is_reasoning=False — flip is_reasoning to True and "
                       f"set type_filter accordingly", file=sys.stderr)
 
-            return content or "", elapsed, None
+            return content or "", elapsed, None, tps
     except urllib.error.HTTPError as e:
         body = ""
         try:
             body = e.read().decode()[:120]
         except Exception:
             pass
-        return "", time.time() - t0, f"HTTP{e.code}:{body}"
+        return "", time.time() - t0, f"HTTP{e.code}:{body}", {"predicted_per_second": None, "prompt_per_second": None}
     except Exception as e:
-        return "", time.time() - t0, f"EXC:{type(e).__name__}:{str(e)[:80]}"
+        return "", time.time() - t0, f"EXC:{type(e).__name__}:{str(e)[:80]}", {"predicted_per_second": None, "prompt_per_second": None}
 
 
 # ════════════════════════════════════════════════════════════════════════════════
 # Runner
 # ════════════════════════════════════════════════════════════════════════════════
 
-def run_t_battery(cfg, target_key, task_filter=None):
-    """T1-T9 — single-step classifier battery. 9 pts max."""
+"""Full-response archive (added 2026-08-14).
+
+The `raw` field in every result is a truncated preview (400 chars for T/R,
+2400 for C). That truncation is a *serialization* choice, not a storage one --
+the complete model output was never written anywhere, so a past score could not
+be re-audited without re-running the model. That cost a prod eviction window on
+2026-08-14 when two R5 = 2/2 results (a claimed break of the documented
+"0/N local models break R5" ceiling) could not be verified from the archive:
+the 400-char preview was physically incapable of showing whether the model named
+both the off-by-one AND the memory leak.
+
+Fix: keep the preview in the JSON for readability, write the complete response
+to a sibling file, and store a pointer to it. `/data` on ubullm is a 9.1TB HDD
+at 45% (4.8TB free); a full 53-pt run's untruncated output is a few MB. Storing
+evidence alongside scores is effectively free and makes every past score
+re-auditable without touching the GPU.
+
+Archive root is overridable via BENCH_ARCHIVE_DIR. Default targets ubullm's
+/data when running on the host itself; the pointer is written regardless so the
+JSON always records where the full text was meant to land.
+"""
+ARCHIVE_ROOT = Path(os.environ.get("BENCH_ARCHIVE_DIR", "/data/bench-archive"))
+_ARCHIVE_RUN_ID = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+_ARCHIVE_WARNED = False
+
+
+def archive_response(target_key, battery, test_id, response):
+    """Write the full untruncated response; return a relative pointer string.
+
+    Returns the pointer even if the write fails -- the JSON should always record
+    where the evidence was supposed to be, so a missing file is diagnosable
+    rather than invisible. Never raises: archival is best-effort and must never
+    fail a bench run (same contract as flush_progress).
+    """
+    global _ARCHIVE_WARNED
+    rel = f"{target_key}/{_ARCHIVE_RUN_ID}/{battery}_{test_id}.txt"
+    try:
+        dest = ARCHIVE_ROOT / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(response or "", encoding="utf-8")
+    except Exception as e:
+        if not _ARCHIVE_WARNED:
+            print(f"  [archive warn] {type(e).__name__}: {str(e)[:80]} "
+                  f"(root={ARCHIVE_ROOT}; set BENCH_ARCHIVE_DIR to override)", file=sys.stderr)
+            _ARCHIVE_WARNED = True
+    return rel
+
+
+def check_archive_writable():
+    """Probe ARCHIVE_ROOT for a real write before the battery starts.
+
+    archive_response()'s per-call warning only fires after the first of
+    potentially dozens of failed writes, to stderr -- easy to lose if stderr
+    isn't captured (exactly what happened to the 2026-08-15 Qwen3.8-27B
+    campaign: run from a non-ubullm host, BENCH_ARCHIVE_DIR pointed at a
+    scratch path that didn't survive, archival silently degraded to
+    preview-only for the whole run, tok/s and full outputs both lost). This
+    is a one-time upfront check with a loud banner, printed before any GPU
+    time is spent, so a bad archive root is diagnosable at second zero
+    instead of discovered after the run.
+
+    Does not raise or block the run -- archival stays best-effort by design
+    (same contract as archive_response/flush_progress), but a broken root
+    should never be silent.
+    """
+    probe = ARCHIVE_ROOT / f".write_probe_{_ARCHIVE_RUN_ID}"
+    try:
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except Exception as e:
+        print(f"\n{'!' * 80}", file=sys.stderr)
+        print(f"WARN: archive root not writable — full outputs and this run's evidence", file=sys.stderr)
+        print(f"      will NOT be saved. Scores/tok-s in the results JSON are unaffected,", file=sys.stderr)
+        print(f"      but archive_response() pointers will point at nothing.", file=sys.stderr)
+        print(f"  root:  {ARCHIVE_ROOT}", file=sys.stderr)
+        print(f"  error: {type(e).__name__}: {str(e)[:120]}", file=sys.stderr)
+        print(f"  fix:   set BENCH_ARCHIVE_DIR to a real writable path before running", file=sys.stderr)
+        print(f"{'!' * 80}\n", file=sys.stderr)
+        return False
+
+
+def run_t_battery(cfg, target_key, task_filter=None, on_task_done=None, sampler_override=None):
+    """T1-T9 — single-step classifier battery. 9 pts max.
+
+    on_task_done: optional callable(results_so_far) invoked after each task,
+                  for per-task persistence by callers (e.g. main()).
+    sampler_override: optional dict passed through to call_local() (see call_local docstring).
+    """
     print(f"\n{'═' * 80}")
     print(f"T1-T9 BATTERY — {cfg['name']}")
     print(f"  URL:    {BASE_URL}")
@@ -1303,12 +1952,13 @@ def run_t_battery(cfg, target_key, task_filter=None):
             continue
         messages = t.get("messages", [{"role": "user", "content": t.get("prompt", "")}])
         tools = t.get("tools")
-        response, elapsed, err = call_local(cfg, t.get("prompt", ""), tools=tools, messages_override=messages)
+        response, elapsed, err, tps = call_local(cfg, t.get("prompt", ""), tools=tools, messages_override=messages, sampler_override=sampler_override)
         wall_total += elapsed
         if err:
             print(f"  {t['id']:<22}  {'ERR':>8} {'—':>6} {elapsed:>8.2f}s  {err[:60]}")
-            results.append({"id": t["id"], "label": t["label"], "score": 0, "max": t["max_score"], "err": err, "raw": ""})
+            results.append({"id": t["id"], "label": t["label"], "score": 0, "max": t["max_score"], "err": err, "raw": "", "tps": tps})
             grand_possible += t["max_score"]
+            if on_task_done: on_task_done(results)
             time.sleep(0.5)
             continue
         try:
@@ -1317,11 +1967,12 @@ def run_t_battery(cfg, target_key, task_filter=None):
             passed = False
             err = f"scorer_exc:{type(e).__name__}"
         sc = 1 if passed else 0
-        results.append({"id": t["id"], "label": t["label"], "score": sc, "max": t["max_score"], "elapsed": elapsed, "raw": response[:400], "err": err or ""})
+        results.append({"id": t["id"], "label": t["label"], "score": sc, "max": t["max_score"], "elapsed": elapsed, "raw": response[:400], "raw_full_ref": archive_response(target_key, "T", t["id"], response), "err": err or "", "tps": tps})
         grand_total += sc
         grand_possible += t["max_score"]
         marker = "✓" if sc == t["max_score"] else "✗"
         print(f"  {t['id']:<22}  {marker} {sc}/{t['max_score']:<3} {'/':>3}{t['max_score']:<3} {elapsed:>8.2f}s  raw[:60]={response[:60]!r}")
+        if on_task_done: on_task_done(results)
         time.sleep(0.5)
 
     print("─" * 60)
@@ -1338,8 +1989,12 @@ def run_t_battery(cfg, target_key, task_filter=None):
     }
 
 
-def run_r_battery(cfg, target_key, task_filter=None):
-    """R1-R6 — 17-pt reasoning probe."""
+def run_r_battery(cfg, target_key, task_filter=None, on_task_done=None, sampler_override=None):
+    """R1-R6 — 17-pt reasoning probe.
+
+    on_task_done: optional callable(results_so_far) invoked after each task,
+                  for per-task persistence by callers (e.g. main()).
+    """
     print(f"\n{'═' * 80}")
     print(f"R1-R6 REASONING PROBE — {cfg['name']}")
     print(f"  URL:    {BASE_URL}")
@@ -1356,20 +2011,22 @@ def run_r_battery(cfg, target_key, task_filter=None):
     for t in R_TESTS:
         if task_filter and t["id"] != task_filter:
             continue
-        response, elapsed, err = call_local(cfg, t["prompt"], max_tokens_override=t["max_tokens"])
+        response, elapsed, err, tps = call_local(cfg, t["prompt"], max_tokens_override=t["max_tokens"], sampler_override=sampler_override)
         wall_total += elapsed
         if err:
             print(f"  {t['id']:<4}  {'ERR':>8} {'—':>6} {elapsed:>8.2f}s  {err[:60]}")
-            results.append({"id": t["id"], "score": 0, "max": t["max_score"], "err": err, "raw": ""})
+            results.append({"id": t["id"], "score": 0, "max": t["max_score"], "err": err, "raw": "", "tps": tps})
             grand_possible += t["max_score"]
+            if on_task_done: on_task_done(results)
             time.sleep(1.0)
             continue
         sc = t["scorer"](response)
-        results.append({"id": t["id"], "score": sc, "max": t["max_score"], "elapsed": elapsed, "raw": response[:400], "err": ""})
+        results.append({"id": t["id"], "score": sc, "max": t["max_score"], "elapsed": elapsed, "raw": response[:400], "raw_full_ref": archive_response(target_key, "R", t["id"], response), "err": "", "tps": tps})
         grand_total += sc
         grand_possible += t["max_score"]
         marker = "✓" if sc == t["max_score"] else ("~" if sc > 0 else "✗")
         print(f"  {t['id']:<4}  {marker} {sc}/{t['max_score']:<4} {'/':>3}{t['max_score']:<3} {elapsed:>8.2f}s  raw[:60]={response[:60]!r}")
+        if on_task_done: on_task_done(results)
         time.sleep(1.0)
 
     print("─" * 100)
@@ -1386,8 +2043,12 @@ def run_r_battery(cfg, target_key, task_filter=None):
     }
 
 
-def run_c_battery(cfg, target_key, skip_c8=False):
-    """C1-C6 + C8 — 27-pt coding battery."""
+def run_c_battery(cfg, target_key, skip_c8=False, on_task_done=None, sampler_override=None):
+    """C1-C6 + C8 — 27-pt coding battery.
+
+    on_task_done: optional callable(results_so_far) invoked after each task,
+                  for per-task persistence by callers (e.g. main()).
+    """
     print(f"\n{'═' * 80}")
     print(f"C1-C6+C8 CODING BATTERY — {cfg['name']}")
     print(f"  URL:    {BASE_URL}")
@@ -1402,44 +2063,52 @@ def run_c_battery(cfg, target_key, skip_c8=False):
     print(f"\n{'Test':<6} {'Score':>10} {'/max':>6} {'Latency':>10}  Notes")
     print("─" * 100)
     for tid, label, max_score, prompt, scorer, max_tok in C_TESTS:
-        response, elapsed, err = call_local(cfg, prompt, max_tokens_override=max_tok)
+        response, elapsed, err, tps = call_local(cfg, prompt, max_tokens_override=max_tok, sampler_override=sampler_override)
         wall_total += elapsed
         if err:
             print(f"  {tid:<4}  {'ERR':>10} {'—':>6} {elapsed:>8.2f}s  {err[:60]}")
-            results.append({"id": tid, "label": label, "score": 0, "max": max_score, "err": err, "raw": ""})
+            results.append({"id": tid, "label": label, "score": 0, "max": max_score, "err": err, "raw": "", "tps": tps})
             grand_possible += max_score
+            if on_task_done: on_task_done(results)
             time.sleep(1.0)
             continue
         score, notes = scorer(response)
         results.append({
             "id": tid, "label": label, "score": score, "max": max_score,
-            "elapsed": elapsed, "raw": response[:2400], "err": "", "notes": notes,
+            "elapsed": elapsed, "raw": response[:2400],
+            "raw_full_ref": archive_response(target_key, "C", tid, response),
+            "err": "", "notes": notes, "tps": tps,
         })
         grand_total += score
         grand_possible += max_score
         marker = "✓" if score == max_score else ("~" if score > 0 else "✗")
         note_str = "; ".join(notes[:2])[:80]
         print(f"  {tid:<4}  {marker} {score}/{max_score:<3} {'/':>3}{max_score:<3} {elapsed:>8.2f}s  {note_str}")
+        if on_task_done: on_task_done(results)
         time.sleep(1.0)
 
     if not skip_c8:
         print(f"\n  C8   (TTLCache implementation vs vitest)")
-        response, elapsed, err = call_local(cfg, build_c8_prompt(), max_tokens_override=4000)
+        response, elapsed, err, tps = call_local(cfg, build_c8_prompt(), max_tokens_override=4000, sampler_override=sampler_override)
         wall_total += elapsed
         if err:
             print(f"  C8    {'ERR':>10} {'—':>6} {elapsed:>8.2f}s  {err[:60]}")
-            results.append({"id": "C8", "label": "TTLCache vs vitest", "score": 0, "max": 5, "err": err, "raw": ""})
+            results.append({"id": "C8", "label": "TTLCache vs vitest", "score": 0, "max": 5, "err": err, "raw": "", "tps": tps})
             grand_possible += 5
+            if on_task_done: on_task_done(results)
         else:
             score, notes = run_c8(response)
             results.append({
                 "id": "C8", "label": "TTLCache vs vitest", "score": score, "max": 5,
-                "elapsed": elapsed, "raw": response[:2400], "err": "", "notes": notes,
+                "elapsed": elapsed, "raw": response[:2400],
+                "raw_full_ref": archive_response(target_key, "C", "C8", response),
+                "err": "", "notes": notes, "tps": tps,
             })
             grand_total += score
             grand_possible += 5
             marker = "✓" if score == 5 else ("~" if score > 0 else "✗")
             print(f"  C8    {marker} {score}/5    /5    {elapsed:>8.2f}s  {'; '.join(notes[:3])[:80]}")
+            if on_task_done: on_task_done(results)
 
     print("─" * 100)
     pct = 100 * grand_total / grand_possible if grand_possible else 0
@@ -1474,6 +2143,31 @@ def main():
                         help="Skip C8 (vitest install/run) — for environments without bun.")
     parser.add_argument("--out-dir", default=None,
                         help="Override output JSON directory (default: MEMORY/WORK/<this-session>/)")
+    # Sampler override flags (added 2026-08-10 per
+    # `PAI/MEMORY/KNOWLEDGE/Research/local-llm-sampler-tuning-2026-08-10.md`).
+    # Default = None means "use the value from MODELS[<target>]" (currently always
+    # temperature=0 / greedy). Setting any of these forces the OpenAI-compat field of
+    # the same name on every request in the run. Use to re-bench a model under its
+    # manufacturer's official sampler block (e.g. qwen team: T=0.7, top_p=0.8,
+    # top_k=20, repeat_penalty=1.1) without editing MODELS in place. Each flag's
+    # presence is recorded in the run JSON's `sampler_override` block so per-run
+    # results are never silently conflated with the greedy baseline.
+    sampler = parser.add_argument_group(
+        "sampler override (per-flag; unset = use MODELS[<target>] value)")
+    sampler.add_argument("--temperature", type=float, default=None,
+                         help="Override sampling temperature (0.0–2.0). Default unset = greedy.")
+    sampler.add_argument("--top-p", dest="top_p", type=float, default=None,
+                         help="Override nucleus sampling top_p (0.0–1.0).")
+    sampler.add_argument("--top-k", dest="top_k", type=int, default=None,
+                         help="Override top-k cutoff (int; 0 disables).")
+    sampler.add_argument("--min-p", dest="min_p", type=float, default=None,
+                         help="Override min-p floor (0.0–1.0).")
+    sampler.add_argument("--repeat-penalty", dest="repeat_penalty", type=float, default=None,
+                         help="Override repeat penalty (1.0 = neutral; 1.05–1.15 typical).")
+    sampler.add_argument("--presence-penalty", dest="presence_penalty", type=float, default=None,
+                         help="Override presence penalty (0.0–2.0; >1.0 breaks CoT on reasoning models).")
+    sampler.add_argument("--frequency-penalty", dest="frequency_penalty", type=float, default=None,
+                         help="Override frequency penalty (0.0–2.0).")
     args = parser.parse_args()
 
     if args.target not in MODELS:
@@ -1495,30 +2189,138 @@ def main():
     except Exception as e:
         print(f"WARN: could not reach llama-server /v1/models: {e}", file=sys.stderr)
 
-    all_results = []
-    if args.battery in ("t", "all"):
-        all_results.append(run_t_battery(cfg, args.target, task_filter=args.task))
-    if args.battery in ("r", "all"):
-        all_results.append(run_r_battery(cfg, args.target, task_filter=args.task))
-    if args.battery in ("c", "all"):
-        all_results.append(run_c_battery(cfg, args.target, skip_c8=args.skip_c8))
+    check_archive_writable()
 
-    # Output JSON
+    all_results = []
+    current_battery_name = None
+    current_results = []
+
+    # Set up output path BEFORE flush_progress so the closure can resolve it
+    # (prior code defined this AFTER flush_progress → NameError on every task).
     if args.out_dir:
         out_dir = Path(args.out_dir)
     else:
         out_dir = Path(__file__).resolve().parent.parent.parent / "MEMORY" / "WORK" / "20260623-142943_local-unified-bench-ubullm"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"llamacpp-bench-{args.target}.json"
+
+    def flush_progress():
+        """Atomic-rename persist of in-progress JSON (added 2026-08-07).
+
+        Durability fix for the pre-existing failure mode where any wrapper/SSH/
+        bench crash mid-53-pt nuked the entire run; the prior write-once-at-end
+        design lost everything on disconnect. Writes to <out_path>.tmp then
+        os.replace() so a partial file can never replace a good one. Errors
+        swallowed: persistence is best-effort, never blocks the bench.
+        """
+        try:
+            payload = {
+                "target": args.target,
+                "model": cfg["model"],
+                "endpoint": BASE_URL,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "_in_progress": True,
+                # Durable pointer to the untruncated responses (see archive_response).
+                # `raw` fields are previews; this is where the real evidence lives.
+                "archive_root": str(ARCHIVE_ROOT),
+                "archive_run": f"{args.target}/{_ARCHIVE_RUN_ID}",
+                # Recorded so per-run results are never silently conflated with the
+                # greedy baseline (MODELS temperature=0). Empty dict = exact pre-2026-08-10
+                # behavior. Added per
+                # `PAI/MEMORY/KNOWLEDGE/Research/local-llm-sampler-tuning-2026-08-10.md`.
+                "sampler_override": sampler_override,
+                "batteries": list(all_results) + (
+                    [_build_partial_battery(current_results, args.target, cfg, current_battery_name)]
+                    if current_results and current_battery_name else []
+                ),
+            }
+            tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+            with open(tmp, "w") as f:
+                json.dump(payload, f, indent=2)
+            os.replace(tmp, out_path)
+        except Exception as e:
+            print(f"  [flush_progress warn] {type(e).__name__}: {str(e)[:80]}", file=sys.stderr)
+
+    def on_task_done(results_so_far):
+        current_results.clear()
+        current_results.extend(results_so_far)
+        flush_progress()
+
+    # Collect sampler overrides from CLI — only include keys the user actually set
+    # (None values skipped downstream), so unset flags fall through to MODELS
+    # defaults (currently always temperature=0). Empty dict when no flag passed =
+    # exact behavior of the pre-2026-08-10 harness.
+    sampler_override = {
+        k: v for k, v in {
+            "temperature": args.temperature,
+            "top_p": args.top_p,
+            "top_k": args.top_k,
+            "min_p": args.min_p,
+            "repeat_penalty": args.repeat_penalty,
+            "presence_penalty": args.presence_penalty,
+            "frequency_penalty": args.frequency_penalty,
+        }.items() if v is not None
+    }
+
+    if args.battery in ("t", "all"):
+        current_battery_name = "T"
+        current_results = []
+        all_results.append(run_t_battery(cfg, args.target, task_filter=args.task, on_task_done=on_task_done, sampler_override=sampler_override))
+        current_battery_name = None
+        current_results = []
+        flush_progress()
+    if args.battery in ("r", "all"):
+        current_battery_name = "R"
+        current_results = []
+        all_results.append(run_r_battery(cfg, args.target, task_filter=args.task, on_task_done=on_task_done, sampler_override=sampler_override))
+        current_battery_name = None
+        current_results = []
+        flush_progress()
+    if args.battery in ("c", "all"):
+        current_battery_name = "C"
+        current_results = []
+        all_results.append(run_c_battery(cfg, args.target, skip_c8=args.skip_c8, on_task_done=on_task_done, sampler_override=sampler_override))
+        current_battery_name = None
+        current_results = []
+        flush_progress()
+
+    # Final output JSON — overwrite in-progress with clean complete file.
+    # (out_dir / out_path already set above before flush_progress.)
     with open(out_path, "w") as f:
         json.dump({
             "target": args.target,
             "model": cfg["model"],
             "endpoint": BASE_URL,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "sampler_override": sampler_override,
+            # Durable pointer to untruncated responses (see archive_response).
+            # Must stay in sync with flush_progress's payload — the final write
+            # overwrites the in-progress file, so omitting it here would null out
+            # the pointer in exactly the artifact that outlives the run.
+            "archive_root": str(ARCHIVE_ROOT),
+            "archive_run": f"{args.target}/{_ARCHIVE_RUN_ID}",
             "batteries": all_results,
         }, f, indent=2)
     print(f"\nResults saved: {out_path}")
+
+
+def _build_partial_battery(results, target_key, cfg, battery_name):
+    """Compute running score/wall_s for an in-progress battery so the flushed
+    JSON is useful for live monitoring, not just a results list."""
+    score = sum(int(r.get("score", 0) or 0) for r in results)
+    possible = sum(int(r.get("max", 1) or 1) for r in results)
+    wall = sum(float(r.get("elapsed", 0) or 0) for r in results)
+    pct = 100 * score / possible if possible else 0
+    return {
+        "battery": battery_name,
+        "target": target_key,
+        "model": cfg["model"],
+        "score": f"{score}/{possible}",
+        "pct": pct,
+        "wall_s": wall,
+        "_partial": True,
+        "results": results,
+    }
 
 
 if __name__ == "__main__":

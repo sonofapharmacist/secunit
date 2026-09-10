@@ -63,11 +63,90 @@ interface Manifest {
 
 // ── Meta parsing ────────────────────────────────────────────────────────────
 
+// Common lowercase connector words, plus capitalized nouns that only ever
+// appear in titles/edition markers, never as a surname — show a segment is
+// prose (a title), not a name. Real author segments are almost never made
+// only of capitalized words, but titles routinely contain "the", "of",
+// "Guide", "Edition", etc.
+const TITLE_WORD = /^(a|an|the|of|and|or|for|to|in|on|with|is|are|your|our|my|guide|edition|study|manual|handbook|reference|essentials|introduction|fundamentals|second|third|fourth|fifth|sixth)$/i;
+
+// A dash-segment "looks like an author" if it has a strong name signal:
+// either a comma (covers "Last, First" and multi-author lists like "Mike
+// Chapple, David Seidl") or every word is capitalized/initials with no
+// lowercase title-words and no digits, 1-4 words per comma/& separated name.
+function looksLikeAuthor(segment: string): boolean {
+  if (/\d/.test(segment)) return false;
+  // A colon is a title/subtitle delimiter ("Dune: Messiah"), never appears in
+  // an author name — reject before it can masquerade as a 2-word name.
+  if (segment.includes(":")) return false;
+  const hasComma = segment.includes(",");
+  const names = segment.split(/\s*[,&]\s*/).filter(Boolean);
+  if (names.length === 0) return false;
+
+  const shapedLikeName = names.every((n) => {
+    const words = n.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 1 || words.length > 4) return false;
+    return words.every((w) => /^[A-Z]/.test(w) && !TITLE_WORD.test(w));
+  });
+  if (!shapedLikeName) return false;
+
+  // Without a comma, require <=4 words total (allows initials like "Paul S.
+  // A. Kemp") so plain phrases like "The Old Republic" (already excluded by
+  // the title-word check via "the") don't slip through on word-count alone.
+  if (!hasComma) {
+    const totalWords = segment.trim().split(/\s+/).filter(Boolean).length;
+    return totalWords <= 4;
+  }
+  return true;
+}
+
+function normalizeAuthor(segment: string): string {
+  // If the whole segment (before any "&" split) is a plain comma list with
+  // no "&" — e.g. "Mike Chapple, David Seidl" — each comma-part is already
+  // a full "First Last" name, so just join with " & " as-is.
+  if (!segment.includes("&") && segment.split(/\s*,\s*/).length > 1) {
+    const parts = segment.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean);
+    const allMultiWord = parts.every((p) => p.split(/\s+/).filter(Boolean).length >= 2);
+    if (parts.length > 2 || allMultiWord) return parts.join(" & ");
+  }
+
+  // Otherwise each "&"-separated name may itself be "Last, First" — reorder
+  // per name — e.g. "Guin, Ursula K. Le & Attebery, Brian".
+  const names = segment.split(/\s*&\s*/).map((n) => n.trim());
+  return names
+    .map((n) => {
+      const parts = n.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean);
+      return parts.length === 2 ? `${parts[1]} ${parts[0]}`.trim() : n;
+    })
+    .join(" & ");
+}
+
 function cleanMeta(sourcePath: string): { title: string; author: string } {
   let s = basename(sourcePath, extname(sourcePath));
 
   // Strip ISBN-like numbers in parentheses
   s = s.replace(/\(\d{9,13}\)/g, "");
+  // Strip bare publication-year parentheticals like "(1969)" or "(2021)" —
+  // distinct from the bare year-prefix strip below, which only matches a
+  // *leading* unparenthesized year.
+  s = s.replace(/\s*\((?:19|20)\d{2}\)/g, "");
+  // Strip explicit ISBN markers like "(ISBN 0470458534)" / "(ISBN - 0470591005)"
+  s = s.replace(/\(ISBN[\s-]*\d+\)/gi, "");
+  // Strip page-count markers like "(914pgs)"
+  s = s.replace(/\(\d+\s*pgs\)/gi, "");
+  // Strip edition markers like "(5th Edition)" / "(2nd Ed.)" — kept out of
+  // the author-shape check below since the leading digit would otherwise
+  // fail it (e.g. "Michael Bazzell (5th Edition)").
+  s = s.replace(/\s*\((?:\d+(?:st|nd|rd|th)|First|Second|Third|Fourth|Fifth|Sixth)\s+Ed(?:ition)?\.?\)/gi, "");
+  // Strip series markers like "(Space Odyssey, #1)" — a parenthetical whose
+  // only job is "Series Name, #N", which otherwise survives as a dash-segment
+  // and pollutes the title (e.g. "(Space Odyssey, #1) - 2001, A Space Odyssey").
+  s = s.replace(/\s*\([^()]*,\s*#\d+\)/g, "");
+  // Collapse any now-adjacent dash separators left by the strip above
+  // (e.g. "Author - - Title" -> "Author - Title").
+  s = s.replace(/(\s+-\s+)-\s+/g, "$1").replace(/\s+-(\s+-\s+)/g, "$1");
+  // Strip Dewey/catalog-number prefix like "005.8 - " or "010 - "
+  s = s.replace(/^\d{2,3}(\.\d+)?\s+-\s+/, "");
   // Strip year prefix (realistic years only: 19xx or 20xx)
   s = s.replace(/^(19|20)\d{2}\s+/, "");
   // Strip publisher suffixes like _Rebll _Rsvl _Rsbl
@@ -76,31 +155,90 @@ function cleanMeta(sourcePath: string): { title: string; author: string } {
   s = s.replace(/\[[^\]]+\]/g, "");
   // Normalize underscores to spaces
   s = s.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  // Normalize word-joining hyphens between two *alphabetic* words with no
+  // surrounding whitespace (e.g. "The-Silence-of-the-Lambs") to spaces —
+  // title punctuation, not the " - " author/title separator. Restricted to
+  // letters-only on both sides so alphanumeric codes like "SY0-601" or
+  // "IQ4-XS" (common in this library's tech/cert filenames) are untouched.
+  s = s.replace(/(?<=[a-zA-Z])-(?=[a-zA-Z])/g, (m, offset, str) => {
+    // Skip if either adjacent "word" (run back/forward to whitespace or
+    // string edge) contains a digit anywhere — that marks it as a code.
+    const before = str.slice(0, offset).match(/[^\s-]*$/)?.[0] ?? "";
+    const after = str.slice(offset + 1).match(/^[^\s-]*/)?.[0] ?? "";
+    return /\d/.test(before) || /\d/.test(after) ? "-" : " ";
+  }).replace(/\s+/g, " ").trim();
+  // Drop trailing loose part-number artifacts like ".1" or ".001"
+  s = s.replace(/\.\d{1,3}$/, "").trim();
 
   // Try to split on " - " to detect "Author - Title" or "Title - Author"
-  const parts = s.split(/\s+-\s+/);
+  const parts = s.split(/\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  let result: { author: string; title: string } | null = null;
+
   if (parts.length >= 2) {
-    const first = parts[0].trim();
-    const second = parts.slice(1).join(" - ").trim();
-    // If first part is 2-3 words with no numbers, treat as author
-    const firstWords = first.split(/\s+/);
-    if (firstWords.length <= 3 && !/\d/.test(first) && firstWords.length < second.split(/\s+/).length) {
-      return { author: first, title: second };
-    }
-    // Check reverse: "A Brief History of Time - Stephen Hawking"
-    const secondWords = second.split(/\s+/);
-    if (secondWords.length <= 3 && !/\d/.test(second)) {
-      return { author: second, title: first };
+    const first = parts[0];
+    const last = parts[parts.length - 1];
+    const middle = parts.slice(1, -1);
+
+    // A comma ("Last, First") is the strongest author signal available. If a
+    // middle segment carries one and the edge that would otherwise win
+    // (first, when it's author-shaped and last isn't) doesn't, promote the
+    // middle segment instead — e.g. "Smith - Doe, J. - The Great Book" should
+    // pull out "Doe, J.", not the plain capitalized word "Smith".
+    const commaMiddleIdx = middle.findIndex((m) => looksLikeAuthor(m) && m.includes(","));
+    if (commaMiddleIdx !== -1 && !(looksLikeAuthor(first) && first.includes(",")) && !(looksLikeAuthor(last) && last.includes(","))) {
+      const rest = [first, ...middle.slice(0, commaMiddleIdx), ...middle.slice(commaMiddleIdx + 1), last];
+      result = { author: normalizeAuthor(middle[commaMiddleIdx]), title: rest.join(" - ") };
+    } else if (looksLikeAuthor(first) && !looksLikeAuthor(last)) {
+      // "Author - Title[ - Series...]": leading segment reads as an author list
+      result = { author: normalizeAuthor(first), title: [...middle, last].join(" - ") };
+    } else if (looksLikeAuthor(last) && !looksLikeAuthor(first)) {
+      // "Title[ - Series...] - Author": trailing segment reads as an author list
+      result = { author: normalizeAuthor(last), title: [first, ...middle].join(" - ") };
+    } else if (looksLikeAuthor(first) && looksLikeAuthor(last)) {
+      // Both ends look author-shaped (rare/ambiguous). Rank signals strongest
+      // to weakest: a comma ("Last, First") beats a mid-name initial ("S. A.")
+      // beats plain word count, since titles are usually longer than a name.
+      const hasInitial = (s: string) => /\b[A-Z]\.\s/.test(s);
+      const firstHasComma = first.includes(",");
+      const lastHasComma = last.includes(",");
+      const firstHasInitial = hasInitial(first);
+      const lastHasInitial = hasInitial(last);
+      const preferFirst = firstHasComma && !lastHasComma
+        ? true
+        : lastHasComma && !firstHasComma
+        ? false
+        : firstHasInitial && !lastHasInitial
+        ? true
+        : lastHasInitial && !firstHasInitial
+        ? false
+        : first.split(/\s+/).length <= last.split(/\s+/).length;
+      result = preferFirst
+        ? { author: normalizeAuthor(first), title: [...middle, last].join(" - ") }
+        : { author: normalizeAuthor(last), title: [first, ...middle].join(" - ") };
     }
   }
 
-  return { author: "", title: s };
+  if (!result) result = { author: "", title: s };
+
+  // Re-clean the final title: a reassembled multi-segment title can still
+  // carry a bare (non-parenthetical) edition/marketing phrase that survived
+  // because it wasn't the author-deciding segment — e.g. "The Art of War -
+  // The Complete Edition - Sun Tzu" leaves "The Complete Edition" in the
+  // title. Strip whole segments that are just an edition/marketing phrase.
+  const EDITION_PHRASE = /^(the\s+)?(complete|collector'?s?|deluxe|revised|updated|expanded|special|anniversary|definitive)\s+edition$/i;
+  result.title = result.title
+    .split(/\s+-\s+/)
+    .filter((seg) => !EDITION_PHRASE.test(seg.trim()))
+    .join(" - ")
+    .trim();
+
+  return result;
 }
 
 function localPath(entry: BookEntry, mountPath: string): string {
   if (entry.ocr_path) return entry.ocr_path;
   const relative = entry.source_path.replace(/^\/mnt\/user\/books/, "");
-  return `${mountPath}${relative}`;
+  return join(mountPath, relative);
 }
 
 function tierTags(tier: Tier): string[] {
@@ -298,7 +436,14 @@ async function main(): Promise<void> {
     console.error(`Error: Manifest not found after classify — unexpected.`);
     process.exit(1);
   }
-  const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
+  let manifest: Manifest;
+  try {
+    manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
+  } catch (e) {
+    console.error(`Error: Manifest at ${MANIFEST_PATH} is empty or not valid JSON (${e}).`);
+    console.error(`       Delete it and re-run to force LibraryClassify.ts to regenerate it.`);
+    process.exit(1);
+  }
   await mkdir(LIBRARY_DIR, { recursive: true });
 
   // Build work list

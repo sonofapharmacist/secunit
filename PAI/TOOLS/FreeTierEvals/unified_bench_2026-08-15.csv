@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+glm53,zai,0,8,16,16,40,53,996.8,complete,,,0,0.0

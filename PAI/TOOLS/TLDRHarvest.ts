@@ -312,6 +312,13 @@ function knowledgeDirForDate(date: string): string {
   return join(KNOWLEDGE_ROOT, ym)
 }
 
+// 2026-08-08: found live — a batch run interrupted mid-loop (crash/timeout/kill) leaves
+// already-harvested items with real content on disk but their feed-side `harvested` flag never
+// persisted (saveFeed only runs once, at the very end — see main loop). The next run re-selects
+// those same items as targets, re-fetches/re-extracts, and if extraction fails this time (stale
+// article, non-html redirect, LLM backend hiccup), writeKnowledgeEntry used to overwrite the
+// already-good file with DEFAULT_EXTRACTION's empty template — silently destroying real content.
+// 8 files were lost this way on 2026-08-07 (commit cadb8c27) before this guard existed.
 function writeKnowledgeEntry(entry: KnowledgeEntry, dryRun: boolean): void {
   if (dryRun) {
     console.log("\n" + JSON.stringify(entry, null, 2))
@@ -320,6 +327,20 @@ function writeKnowledgeEntry(entry: KnowledgeEntry, dryRun: boolean): void {
   const dir = knowledgeDirForDate(entry.date)
   mkdirSync(dir, { recursive: true })
   const path = join(dir, `${entry.id}.json`)
+
+  if (entry.key_findings.length === 0 && existsSync(path)) {
+    try {
+      const existing = JSON.parse(readFileSync(path, "utf8")) as KnowledgeEntry
+      if (Array.isArray(existing.key_findings) && existing.key_findings.length > 0) {
+        log("!", `refusing to overwrite ${entry.id}.json with empty extraction — file already has ${existing.key_findings.length} key_findings from a prior successful harvest`)
+        return
+      }
+    } catch {
+      // Existing file is unparseable — fall through and let this write replace it, since
+      // there's no recoverable "good" content to protect in that case.
+    }
+  }
+
   writeFileSync(path, JSON.stringify(entry, null, 2) + "\n", "utf8")
 }
 
@@ -421,12 +442,19 @@ async function main(): Promise<void> {
       }
     }
 
+    // 2026-08-08: found live — saveFeed used to run once at the very end of the whole batch.
+    // A run interrupted mid-loop (crash/timeout/kill) meant every item processed so far had its
+    // knowledge JSON written correctly but never got `harvested: true` persisted to the feed —
+    // stranding already-completed items as permanently re-triggerable on the next run, which is
+    // how 8 files lost real content to DEFAULT_EXTRACTION on 2026-08-07 (see writeKnowledgeEntry's
+    // guard above for the other half of that fix). Persisting per-item is more I/O but makes a
+    // mid-batch interruption lose at most the one in-flight item, never the whole processed batch.
+    if (!args.dryRun) saveFeed(feed)
+
     harvested += 1
     // Rate limit — be polite to external sites.
     if (i < targets.length - 1) await sleep(1500)
   }
-
-  if (!args.dryRun) saveFeed(feed)
 
   log("+", `done. harvested=${harvested} fallbacks=${fallbacks}`)
   if (fallbacks > 0) {

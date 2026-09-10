@@ -1046,18 +1046,15 @@ async function main() {
         }
         setTabState({ title: `⚙️ ${prefix}${finalTitle}`, state: 'working', sessionId });
 
-        // ── Voice announcement ──
+        // ── Desktop notification ──
         const voiceContent = finalTitle && isValidWorkingTitle(finalTitle) ? finalTitle : null;
         if (voiceContent) {
-          const identity = getIdentity();
           try {
             await fetch('http://localhost:31337/notify', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 message: voiceContent.replace(/\.$/, ''),
-                voice_id: identity.mainDAVoiceID,
-                voice_enabled: true,
               }),
               signal: AbortSignal.timeout(5000),
             });

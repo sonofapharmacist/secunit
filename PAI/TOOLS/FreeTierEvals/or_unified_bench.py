@@ -69,6 +69,56 @@ ENDPOINTS = {
         "is_reasoning": True,
         "extra_payload": {"reasoning": {"effort": "none"}},
     },
+    "or_deepseek_v4_pro_0813": {
+        "name": "DeepSeek V4 Pro 0813 (1.7T MoE, OpenRouter, GA release supersedes preview)",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "deepseek/deepseek-v4-pro-0813",
+        "passage_key": "api/openrouter",
+        # R-battery's hardcoded max_tokens=3000 truncated R2 (STRIDE->JSON) with
+        # content_null even at reasoning:low — model burns a large reasoning trace
+        # before emitting the answer. force_endpoint_max_tokens overrides it.
+        "max_tokens": 32000,
+        "is_reasoning": True,
+        "force_endpoint_max_tokens": True,
+        # Model card: reasoning_effort is low/high/max (no "medium"). Use "low"
+        # as the cheapest legal setting, matching the qwen38_max pattern below —
+        # "none" is not a valid value for this model.
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
+    "or_qwen38_max": {
+        "name": "Qwen3.8-Max (2.4T/95B MoE, OpenRouter, reasoning cannot be disabled)",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "qwen/qwen3.8-max",
+        "passage_key": "api/openrouter",
+        "max_tokens": 16000,
+        "is_reasoning": True,
+        # Model card: thinking is mandatory for this model, reasoning_effort only
+        # ranges xhigh/medium/low — "none" (used for Inkling/LongCat/Hy3 above) is
+        # not a legal value here. "low" picked to minimize reasoning-token burn
+        # while still letting content populate.
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
+    "or_glm53_flash": {
+        "name": "Z.ai GLM 5.3 Flash (OpenRouter, reasoning:low)",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "z-ai/glm-5.3-flash",
+        "passage_key": "api/openrouter",
+        # Same rationale as or_glm52: GLM 5.x reasoning models don't support
+        # effort:"none" on OpenRouter — use "low" to minimize reasoning burn
+        # while leaving room for content in the 16k budget.
+        "max_tokens": 16000,
+        "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
+    "or_glm53": {
+        "name": "Z.ai GLM 5.3 (regular, OpenRouter, reasoning:low)",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "z-ai/glm-5.3",
+        "passage_key": "api/openrouter",
+        "max_tokens": 16000,
+        "is_reasoning": True,
+        "extra_payload": {"reasoning": {"effort": "low"}},
+    },
 }
 
 
@@ -89,7 +139,14 @@ def resolve_key(passage_key: str) -> str:
 def call_openai_compat(cfg: dict, prompt: str, max_tokens: int = None) -> tuple[str, float, str]:
     """OpenAI-compat chat/completions call. Adds extra_payload if present."""
     api_key = resolve_key(cfg["passage_key"])
-    mt = max_tokens or cfg.get("max_tokens", 4096)
+    # R-battery's hardcoded max_tokens=3000 starves reasoning models whose thinking
+    # trace alone can exceed that budget (content empty, no answer text ever emitted).
+    # Opt in per-endpoint via force_endpoint_max_tokens rather than changing default
+    # behavior for every is_reasoning model already scored on the unified leaderboard.
+    if cfg.get("force_endpoint_max_tokens"):
+        mt = cfg.get("max_tokens", 4096)
+    else:
+        mt = max_tokens or cfg.get("max_tokens", 4096)
     payload = {
         "model": cfg["model"],
         "max_tokens": mt,

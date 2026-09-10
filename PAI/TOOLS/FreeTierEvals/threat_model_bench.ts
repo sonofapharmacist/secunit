@@ -315,8 +315,8 @@ Return ONLY the JSON object, no prose. Keys must include coverage_breakdown, cov
 interface SlotSpec {
   key: string;
   label: string;
-  /** Provider: "anthropic" | "openrouter" | "mistral" | "cohere" | "llamacpp" */
-  provider: "anthropic" | "openrouter" | "mistral" | "cohere" | "llamacpp";
+  /** Provider: "anthropic" | "openrouter" | "mistral" | "cohere" | "llamacpp" | "zai" */
+  provider: "anthropic" | "openrouter" | "mistral" | "cohere" | "llamacpp" | "zai";
   /** Model slug passed to provider */
   model: string;
   /** output_config.effort (Anthropic only); undefined for OpenRouter */
@@ -399,6 +399,11 @@ const ROSTER: SlotSpec[] = [
     timeoutSec: 300, maxTokens: 8192,
   },
   {
+    key: "glm53", label: "Z.ai GLM-5.3 (native Anthropic-compat, api/glm — not on OpenRouter yet as of 2026-08-16)",
+    provider: "zai", model: "glm-5.3",
+    timeoutSec: 300, maxTokens: 8192,
+  },
+  {
     key: "glm52", label: "Z.ai GLM-5.2 (OpenRouter, 1M ctx, Tier-0 frontier)",
     provider: "openrouter", model: "z-ai/glm-5.2",
     timeoutSec: 300, maxTokens: 8192,
@@ -439,6 +444,14 @@ const ROSTER: SlotSpec[] = [
     timeoutSec: 300, maxTokens: 8192,
   },
   {
+    key: "deepseekV4Pro0813", label: "DeepSeek V4 Pro 0813 (OpenRouter, GA release)",
+    provider: "openrouter", model: "deepseek/deepseek-v4-pro-0813",
+    // 8192 (default) and 24000 both truncated mid-reasoning with finish_reason:length,
+    // content:null — harness has no reasoning.effort override wired, so OpenRouter
+    // uses this model's default effort (large trace even unrequested). Bumped to 48000.
+    timeoutSec: 400, maxTokens: 48000,
+  },
+  {
     key: "deepseekV4Flash", label: "DeepSeek V4 Flash (OpenRouter, SiliconFlow)",
     provider: "openrouter", model: "deepseek/deepseek-v4-flash",
     timeoutSec: 300, maxTokens: 8192,
@@ -447,6 +460,23 @@ const ROSTER: SlotSpec[] = [
     key: "kimiK26", label: "Kimi K2.6 (OpenRouter MoE, Anvil-only)",
     provider: "openrouter", model: "moonshotai/kimi-k2.6",
     timeoutSec: 600, maxTokens: 8192,
+  },
+  // LongCat 2.0 — Meituan MoE on OpenRouter (60% off July 2026 discount list).
+  // Unified bench: 51/53 (96.2%) including 17/17 R-perfect, 9/9 T-perfect.
+  // Adding here as a Tier-0/1 security-planner candidate to compare against
+  // the existing Kimi K2.6 / GLM 5.2 / DeepSeek V4 Pro roster.
+  {
+    key: "longcat2", label: "Meituan LongCat 2.0 (OpenRouter, 60% off, Tier-0 candidate)",
+    provider: "openrouter", model: "meituan/longcat-2.0",
+    timeoutSec: 600, maxTokens: 8192,
+  },
+  // GPT-5.6 Luna — cheapest OpenAI-family model ever unified-benched (48/53,
+  // $0.10/$0.60). Unvetted for PAI-specific security reasoning; adding to
+  // compare against LongCat 2.0's 9.28/10, PAI 3/3 threat-model result.
+  {
+    key: "luna56", label: "OpenAI GPT-5.6 Luna (OpenRouter, cheap-tier candidate)",
+    provider: "openrouter", model: "openai/gpt-5.6-luna",
+    timeoutSec: 300, maxTokens: 8192,
   },
   // ── Cohere direct (native Cohere API, /v2/chat) ────────────────────────────
   // North Mini Code is open-weight but not yet on the Cohere chat API as of
@@ -525,6 +555,24 @@ const ROSTER: SlotSpec[] = [
   {
     key: "mellum2_12b_thinking", label: "Mellum2-12B-Thinking (your-inference-host, reasoning variant)",
     provider: "llamacpp", model: "mellum2:12b-thinking",
+    timeoutSec: 600, maxTokens: 8192,
+  },
+  // ── 2026-08-09 threat-bench sweep: Kimi-Linear + Qwen3.6 + Qwen3-Coder-Next (prod control) ──
+  // Each requires a llama-server swap on your-inference-host (sudo sed /etc/systemd/.../llama-server.service)
+  // except qwen3CoderNext80bA3b which is the live prod alias.
+  {
+    key: "kimiLinear48bA3b", label: "Kimi-Linear-48B-A3B (your-inference-host, IQ4_XS, hybrid linear-attention MoE, 26.5GB, 44/53 unified)",
+    provider: "llamacpp", model: "kimi-linear-48b-a3b",
+    timeoutSec: 600, maxTokens: 8192,
+  },
+  {
+    key: "qwen36_35b_a3b", label: "Qwen3.6-35B-A3B (your-inference-host, UD-Q4_K_M, 22.7GB, 42/53 unified, 2× C-timeouts)",
+    provider: "llamacpp", model: "qwen36:35b-a3b",
+    timeoutSec: 600, maxTokens: 8192,
+  },
+  {
+    key: "qwen3CoderNext80bA3b", label: "Qwen3-Coder-Next-80B-A3B (your-inference-host, IQ4_NL live prod alias, 48/53 unified, control)",
+    provider: "llamacpp", model: "qwen3_next_80b_a3b",
     timeoutSec: 600, maxTokens: 8192,
   },
 ];
@@ -685,7 +733,11 @@ const PRICING: Record<
   "mistralai/devstral-2512": { input: 0.4, output: 2, thinking: 2 },
   "deepseek/deepseek-v4-flash": { input: 0.11, output: 0.22 },
   "deepseek/deepseek-v4-pro": { input: 0.44, output: 0.87 },
+  "deepseek/deepseek-v4-pro-0813": { input: 0.435, output: 0.87 },
   "openrouter-default": { input: 1, output: 5, thinking: 5 },
+  // LongCat 2.0 OpenRouter promo (60% off, July 2026 discount list)
+  // https://openrouter.ai/collections/discounted-models — $0.30/$1.20
+  "meituan/longcat-2.0": { input: 0.30, output: 1.20 },
   // Mistral direct API prices (per
   // PAI/MEMORY/KNOWLEDGE/Research/mistral-api-pricing-2026-06.md).
   // Used when slot.provider === "mistral" — billed as open-mistral-tier pricing,
@@ -861,6 +913,7 @@ interface OpenRouterCallOpts {
   model: string;
   fallbackModel?: string;
   timeoutSec?: number;
+  maxTokens?: number;
 }
 
 async function callOpenRouter(
@@ -889,7 +942,7 @@ async function callOpenRouter(
         body: JSON.stringify({
           model,
           messages,
-          max_tokens: 8192,
+          max_tokens: opts.maxTokens ?? 8192,
           temperature: 0.2,
         }),
         signal: ctrl.signal,
@@ -982,6 +1035,23 @@ async function getMistralKey(): Promise<string> {
   }
   const key = stdout.trim();
   if (!key) throw new Error("passage returned empty Mistral key");
+  return key;
+}
+
+/** Resolve Z.ai API key from `passage show api/glm` */
+async function getZaiKey(): Promise<string> {
+  const proc = spawn({
+    cmd: ["passage", "show", "api/glm"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    throw new Error(`passage show api/glm exited ${exitCode}`);
+  }
+  const key = stdout.trim();
+  if (!key) throw new Error("passage returned empty Z.ai key");
   return key;
 }
 
@@ -1359,6 +1429,114 @@ async function callLlamacpp(
   }
 }
 
+/**
+ * callZai — Z.ai's Anthropic-compat endpoint (api.z.ai/api/anthropic), for GLM models
+ * not (yet) available on OpenRouter. Structurally a copy of callAnthropic pointed at a
+ * different host, with one addition: GLM-5.3 (confirmed 2026-08-16) rejects requests with
+ * no `thinking` block — HTTP 400 code 1210, "This model always engages in thinking and
+ * cannot be disabled". budget_tokens must be added on top of max_tokens, not carved out of
+ * it, or the whole response gets consumed by the thinking trace with zero answer text
+ * returned (observed: max_tokens=100 fully eaten by thinking, stop_reason=max_tokens).
+ * See PAI/TOOLS/FreeTierEvals/anthropic_compat_eval.py for the same fix applied there.
+ */
+async function callZai(
+  model: string,
+  systemPrompt: string | null,
+  userPrompt: string,
+  apiKey: string,
+  opts: AnthropicCallOpts = {},
+): Promise<CallResult> {
+  const t0 = Date.now();
+  const timeoutMs = (opts.timeoutSec ?? 120) * 1000;
+  const payload: Record<string, unknown> = {
+    model,
+    max_tokens: 8192,
+    messages: [{ role: "user", content: userPrompt }],
+  };
+  if (systemPrompt) payload.system = systemPrompt;
+  if (model === "glm-5.3") {
+    payload.thinking = { type: "enabled", budget_tokens: 4096 };
+    payload.max_tokens = (payload.max_tokens as number) + 4096;
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const resp = await fetch("https://api.z.ai/api/anthropic/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const wall = (Date.now() - t0) / 1000;
+    const status = resp.status;
+    const raw = (await resp.json()) as AnthropicResponse | { error?: unknown };
+    if (!resp.ok) {
+      return {
+        text: "",
+        meta: {
+          wall_seconds: wall,
+          input_tokens: 0,
+          output_tokens: 0,
+          thinking_tokens: 0,
+          cost_estimate_usd: 0,
+          raw_status: status,
+          raw_error: JSON.stringify(raw).slice(0, 1000),
+        },
+      };
+    }
+    const data = raw as AnthropicResponse;
+    const text = (data.content ?? [])
+      .filter((c) => c.type === "text")
+      .map((c) => c.text ?? "")
+      .join("");
+    const input_tokens = data.usage?.input_tokens ?? 0;
+    const output_tokens = data.usage?.output_tokens ?? 0;
+    const cost = estimateCost(model, input_tokens, output_tokens, 0);
+    return {
+      text,
+      meta: {
+        wall_seconds: wall,
+        input_tokens,
+        output_tokens,
+        thinking_tokens: 0,
+        cost_estimate_usd: cost,
+        raw_status: status,
+        raw_error: null,
+      },
+      routing: {
+        served_by: data.model ?? model,
+        model_returned: data.model ?? null,
+        stop_reason: data.stop_reason ?? null,
+        stop_details_category: null,
+        iterations: [],
+        served_by_fallback: data.model !== model,
+      },
+    };
+  } catch (e) {
+    clearTimeout(timer);
+    const wall = (Date.now() - t0) / 1000;
+    const isAbort = e instanceof Error && e.name === "AbortError";
+    return {
+      text: "",
+      meta: {
+        wall_seconds: wall,
+        input_tokens: 0,
+        output_tokens: 0,
+        thinking_tokens: 0,
+        cost_estimate_usd: 0,
+        raw_status: 0,
+        raw_error: isAbort ? `timeout after ${(opts.timeoutSec ?? 600)}s` : (e as Error).message,
+      },
+    };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified slot caller (dispatches based on slot.provider)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1371,6 +1549,7 @@ interface SlotCallOpts {
   mistralKey?: string;
   cohereKey?: string;
   llamacppKey?: string;
+  zaiKey?: string;
   jsonMode?: boolean;
 }
 
@@ -1407,6 +1586,13 @@ async function callSlot(slot: SlotSpec, o: SlotCallOpts): Promise<CallResult> {
       model: slot.model,
       timeoutSec: slot.timeoutSec,
     });
+  } else if (slot.provider === "zai") {
+    if (!o.zaiKey) {
+      return emptyCallResult("zai key missing");
+    }
+    return callZai(slot.model, o.systemPrompt ?? null, o.userPrompt, o.zaiKey, {
+      timeoutSec: slot.timeoutSec,
+    });
   } else {
     if (!o.openrouterKey) {
       return emptyCallResult("openrouter key missing");
@@ -1415,6 +1601,7 @@ async function callSlot(slot: SlotSpec, o: SlotCallOpts): Promise<CallResult> {
       model: slot.model,
       fallbackModel: slot.orFallback,
       timeoutSec: slot.timeoutSec,
+      maxTokens: slot.maxTokens,
     });
   }
 }
@@ -1649,6 +1836,7 @@ interface RunOneOpts {
   mistralKey?: string;
   cohereKey?: string;
   llamacppKey?: string;
+  zaiKey?: string;
   dryRun: boolean;
 }
 
@@ -1701,6 +1889,7 @@ async function runOne(opts: RunOneOpts): Promise<RunResult> {
     mistralKey: opts.mistralKey,
     cohereKey: opts.cohereKey,
     llamacppKey: opts.llamacppKey,
+    zaiKey: opts.zaiKey,
   });
 
   // Track routing meta for the headline. For OpenRouter, the served_by tag is per-model.
@@ -1769,7 +1958,7 @@ async function runOne(opts: RunOneOpts): Promise<RunResult> {
 function dryRunCall(
   name: string,
   model: string,
-  provider: "anthropic" | "openrouter",
+  provider: "anthropic" | "openrouter" | "mistral" | "cohere" | "llamacpp" | "zai",
   timeoutSec: number,
   slot?: SlotSpec,
 ): CallResult {
@@ -1967,6 +2156,7 @@ Env:
   let openrouterKey = process.env.OPENROUTER_API_KEY ?? "";
   let mistralKey = process.env.MISTRAL_API_KEY ?? "";
   let cohereKey = process.env.COHERE_API_KEY ?? "";
+  let zaiKey = "";
   const llamacppKey = ""; // unused; llama-server doesn't require a key
   if (!args.dryRun) {
     try {
@@ -2007,6 +2197,16 @@ Env:
         );
       }
     }
+    // Z.ai key: passage-only (no env fallback documented elsewhere in PAI for this key).
+    // Don't fatal — zai slots may simply not be in slotsToRun.
+    try {
+      zaiKey = await getZaiKey();
+    } catch (e) {
+      console.warn(
+        `\`passage show api/glm\` failed: ${(e as Error).message}\n` +
+          `Z.ai slots (e.g. glm53) will fail at the API call.`,
+      );
+    }
   }
 
   // Output dir
@@ -2031,6 +2231,7 @@ Env:
       mistralKey,
       cohereKey,
       llamacppKey,
+      zaiKey,
       dryRun: args.dryRun,
     });
     results.push(r);

@@ -75,7 +75,7 @@
     "ask": [],
     "defaultMode": "default"
   },
-  "model": "sonnet",
+  "model": "claude-fable-5-1[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -1091,7 +1091,7 @@
       "/prompting generates optimized prompts using templates and patterns.",
       "/create-skill scaffolds and validates new PAI skills.",
       "/create-cli generates TypeScript command-line tools.",
-      "/agents creates custom agents with unique personalities and voices.",
+      "/agents creates custom agents with unique personalities and colors.",
       "/evals benchmarks agent behavior with code-based and model-based graders.",
       "/write-story uses Will Storr's storytelling science for layered fiction.",
       "/pai-upgrade monitors Anthropic ecosystem and YouTube for system improvements.",
@@ -1128,7 +1128,7 @@
       "BrowserAgent is a DEPRECATED built-in Claude Code agent. Use the Interceptor skill for web verification and agent-browser via the Browser skill for headless scraping. Playwright MCP (browser_navigate) is the headless fallback when no DISPLAY is available.",
       "UIReviewer validates user stories — one agent per story, parallel execution.",
       "QATester is mandatory Gate 4 before claiming any web implementation is complete.",
-      "Agent templates live in agents/ — one .md file per personality with voice and behavioral rules.",
+      "Agent templates live in agents/ — one .md file per personality with behavioral rules.",
       "Agent teams need CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 (already enabled).",
       "Say 'create an agent team' to trigger multi-agent collaboration.",
       "Custom agents use subagent_type='general-purpose', never built-in type names.",
@@ -1242,7 +1242,6 @@
       "v5.0 eliminated packs. The release IS the .claude/ directory — install by copying directly.",
       "PRD frontmatter has 8 fields: task, slug, effort, phase, progress, mode, started, updated.",
       "PRD body has 4 sections: Context, Criteria (ISC checkboxes), Decisions, Verification.",
-      "Only the primary agent makes voice curls. Subagents and teammates skip voice entirely.",
       "PRDSync.hook.ts fires on Write/Edit of PRD.md and syncs frontmatter to work.json for the dashboard.",
       "Context compaction at phase boundaries prevents context rot — the #1 cause of late-phase failures.",
       "secunit runs Algorithm v7.0.0 — a reliability release. 146 logged failure events drove six coordinated changes.",
@@ -1254,12 +1253,25 @@
     ]
   },
   "alwaysThinkingEnabled": false,
+  "modelSettings": {
+    "claude-sonnet-5": {},
+    "glm-5.3": {
+      "effortLevel": "medium"
+    },
+    "claude-opus-5": {
+      "effortLevel": "medium"
+    },
+    "claude-fable-5-1": {
+      "effortLevel": "low"
+    }
+  },
   "awaySummaryEnabled": false,
   "plansDirectory": "Plans/",
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "theme": "dark",
   "teammateMode": "in-process",
+  "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "autoMode": {
     "allow": [
@@ -1343,7 +1355,7 @@
   },
   "contextDisplay": {
     "compactionThreshold": 83,
-    "_docs": "Autocompact buffer is 16.5%% of context window."
+    "_docs": "Autocompact buffer is 16.5%% of context window. Global window is 1M (env.CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000 in this file, set 2026-08-16 — Z.ai/GLM honors ~949K effective; earlier 512K value was an M3-era per-session override that lived in the glm.sh wrapper and never made it here). Autocompact fires at ~83%% of whatever window applies. Threshold is window-relative, not absolute — the 83%% ratio is correct for any window size. The statusline must read the SAME window source or context%% desyncs (open ISA 2026-08-16)."
   },
   "techStack": {
     "packageManager": "bun",
@@ -1356,7 +1368,7 @@
   "_docs": {
     "_overview": "PAI settings — directly edited. Personal values live here. ShadowRelease.ts produces public staging via containment: clone + zone deletion + template overlay.",
     "_sections": {
-      "daidentity": "Digital Assistant identity (name, displayName, fullName, color, voiceId). Read by hooks via hooks/lib/identity.ts.",
+      "daidentity": "Digital Assistant identity (name, displayName, fullName, color).",
       "principal": "Principal (owner) identity (name, pronunciation, timezone).",
       "env": "Environment variables available to all hooks and tools via process.env",
       "permissions": "Tool permission configuration (allow, deny, ask lists)",

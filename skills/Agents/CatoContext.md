@@ -69,9 +69,9 @@ Output ONLY this JSON on one line, no markdown, no prose, no preamble:
 
 | Failure | Tool behavior | Your response to the DA |
 |---------|---------------|----------------------|
-| `codex` CLI missing | Tool exits 2, emits `{"verdict":"skipped","reason":"codex CLI not installed"}` | Pass through |
-| Codex API rate-limited | Tool retries once after 5s backoff, then gives up | `{"verdict":"skipped","reason":"rate limit"}` |
-| Codex timeout (120s) | Tool aborts | `{"verdict":"skipped","reason":"timeout"}` |
+| `codex` CLI missing | Tool exits 0, emits `{"verdict":"skipped","reason":"codex CLI not installed"}` (preflight short-circuit; no fallback) | Pass through |
+| Codex present but fails (exit ≠ 0, 120s timeout, upstream-error stderr) | Tool auto-cascades to `ForgeOpenRouter.ts --model openai/gpt-5.4` and stamps `audit_path: "openrouter-fallback"` on the JSONL row (2026-08-08+). Pass `--no-fallback` to keep fail-closed. | Pass through; surface `audit_path` in your report |
+| Codex timeout (120s) | Tool aborts; OR fallback runs unless `--no-fallback` | `audit_path` flags which ran |
 | JSON parse failure | Tool logs raw output to `cato-findings.jsonl` with `parse_error: true` | `{"verdict":"skipped","reason":"parse error"}` |
 | ISA missing | Tool exits 1 | `{"verdict":"error","reason":"ISA not found"}` |
 | Bundle would exceed 80K tokens | Tool drops tool-tail, then oldest artifacts, logs what was dropped | No effect on your response — Tool handles it |

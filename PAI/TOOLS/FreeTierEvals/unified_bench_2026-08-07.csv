@@ -1,0 +1,16 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+sonnet,anthropic,0,0,0,0,0,26,0.3,lite,,,0,0.0
+sonnet5,anthropic,0,0,0,0,0,26,0.3,lite,,,0,0.0
+haiku,anthropic,1,0,0,0,0,26,0.3,lite,,,0,0.0
+opus,anthropic,0,0,0,0,0,26,0.3,lite,,,0,0.0
+fable5,anthropic,0,0,0,0,0,26,0.3,lite,,,0,0.0
+m3,minimax,0,0,0,0,0,26,0.3,lite,,,0,0.0
+glm52-1m,zai,0,0,0,0,0,26,0.3,lite,,,0,0.0
+glm51,zai,0,0,0,0,0,26,0.3,lite,,,0,0.0
+glm47,zai,0,0,0,0,0,26,0.3,lite,,,0,0.0
+glm45air,zai,0,0,0,0,0,26,0.3,lite,,,0,0.0
+small4,mistral,1,0,0,0,0,26,0.2,lite,,,0,0.0
+codestral,mistral,4,0,0,0,0,26,0.2,lite,,,0,0.0
+medium35,mistral,1,0,0,0,0,26,0.2,lite,,,0,0.0
+devstralMed,mistral,4,0,0,0,0,26,0.2,lite,,,0,0.0
+devstralSmall2,mistral,4,0,0,0,0,26,0.2,lite,,,0,0.0

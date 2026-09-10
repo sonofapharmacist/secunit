@@ -134,8 +134,7 @@ These define user-specific preferences. If the directory does not exist, proceed
 │   └── SceneConstruction.md     # Scene building guidelines
 ├── Agents/                      # Agents skill customizations
 │   ├── EXTEND.yaml              # Extension manifest
-│   ├── PREFERENCES.md           # Named agent summary
-│   └── VoiceConfig.json         # ElevenLabs voice mappings
+│   └── PREFERENCES.md           # Named agent summary
 ├── Webdesign/                   # Webdesign customizations
 │   ├── EXTEND.yaml              # Extension manifest
 │   └── PREFERENCES.md           # Design tokens, palette
@@ -173,7 +172,7 @@ description: "What this customization adds"
 | Content Type | Location | Example |
 |--------------|----------|---------|
 | User preferences | `SKILLCUSTOMIZATIONS/{Skill}/PREFERENCES.md` | Art style, color palette |
-| Named configurations | `SKILLCUSTOMIZATIONS/{Skill}/[name].md` | Character specs, voice configs |
+| Named configurations | `SKILLCUSTOMIZATIONS/{Skill}/[name].md` | Character specs, persona configs |
 | Skill logic | `skills/{Skill}/SKILL.md` | Generic, shareable skill code |
 
 ### Creating a Customization
@@ -251,11 +250,11 @@ science_cycle_time: meso
 
 [Brief description of what the skill does]
 
-## Voice Notification
+## Workflow Notification
 
 **When executing a workflow, do BOTH:**
 
-1. **Send voice notification**:
+1. **Send notification**:
    ```bash
    curl -s -X POST http://localhost:31337/notify \
      -H "Content-Type: application/json" \
@@ -619,11 +618,11 @@ description: Complete blog workflow. USE WHEN user mentions doing anything with 
 
 Complete blog workflow.
 
-## Voice Notification
+## Workflow Notification
 
 **When executing a workflow, do BOTH:**
 
-1. **Send voice notification**:
+1. **Send notification**:
    ```bash
    curl -s -X POST http://localhost:31337/notify \
      -H "Content-Type: application/json" \
@@ -996,7 +995,7 @@ bun Generate.ts \
 When a skill is invoked, follow the SKILL.md instructions step-by-step rather than analyzing the skill structure.
 
 **The pattern:**
-1. Execute voice notification (if present)
+1. Execute the notification curl (if present)
 2. Use the routing table to find the right workflow
 3. Follow the workflow instructions in order
 4. Your behavior should match the Examples section

@@ -33,7 +33,6 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { paiPath, getPaiDir, getClaudeDir } from '../lib/paths';
-import { getIdentity } from '../lib/identity';
 import { inference } from '../../PAI/TOOLS/Inference';
 import type { ParsedTranscript } from '../../PAI/TOOLS/TranscriptParser';
 
@@ -353,7 +352,7 @@ function checkHookCounts(docsToCheck: string[], actualCount: number): DriftItem[
 }
 
 // ============================================================================
-// Voice Notification (fire-and-forget)
+// Desktop Notification (fire-and-forget)
 // ============================================================================
 
 async function notifyVoice(message: string): Promise<void> {
@@ -362,10 +361,10 @@ async function notifyVoice(message: string): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(3000),
-      body: JSON.stringify({ message, voice_id: getIdentity().mainDAVoiceID }),
+      body: JSON.stringify({ message }),
     });
   } catch {
-    // Voice server may not be running — silent fail
+    // Pulse may not be running — silent fail
   }
 }
 

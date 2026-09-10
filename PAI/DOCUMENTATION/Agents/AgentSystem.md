@@ -8,10 +8,10 @@
 
 PAI has three agent systems that serve different purposes. Confusing them causes routing failures.
 
-| System | What It Is | When to Use | Has Unique Voice? |
-|--------|-----------|-------------|-------------------|
+| System | What It Is | When to Use | Has Unique Persona? |
+|--------|-----------|-------------|---------------------|
 | **Task Tool Subagent Types** | Pre-built agents in Claude Code (Architect, Designer, Engineer, Explore, etc.) | Internal workflow use ONLY | No |
-| **Named Agents** | Persistent identities with backstories and voices (your own personas) | Recurring work, voice output, relationships | Yes |
+| **Named Agents** | Persistent identities with backstories (your own personas) | Recurring work, relationships | Yes |
 | **Custom Agents** | Dynamic agents composed via ComposeAgent from traits | When user says "custom agents" | Yes (trait-mapped) |
 
 ---
@@ -31,7 +31,7 @@ Skill("Agents")  // → CreateCustomAgent workflow
 // OR follow the workflow directly:
 // 1. Run ComposeAgent with different trait combinations
 // 2. Launch agents with the generated prompts
-// 3. Each gets unique personality + voice
+// 3. Each gets unique personality
 
 // ❌ WRONG - User says "specialized agents to brainstorm"
 Task({ subagent_type: "Designer", prompt: "Brainstorm UI ideas..." })
@@ -40,7 +40,7 @@ Task({ subagent_type: "Engineer", prompt: "Brainstorm state ideas..." })
 
 // ✅ RIGHT - Use Agents skill for ANY user-requested specialized agents
 Skill("Agents")  // → CreateCustomAgent workflow with unique traits per agent
-// Each agent gets: unique name, unique voice, unique personality via ComposeAgent
+// Each agent gets: unique name, unique personality via ComposeAgent
 ```
 
 ---
@@ -57,7 +57,7 @@ Skill("Agents")  // → CreateCustomAgent workflow with unique traits per agent
 | "use Remy", "get Ava to" | Named agent | Use appropriate researcher subagent_type |
 | (Code implementation, standard) | Engineer | `Task({ subagent_type: "Engineer" })` |
 | (Production-grade code, E3+, "no shortcuts" directive, OR named "Forge") | Forge (cross-vendor, OpenAI-family GPT-5.4 via `codex exec`) | `Agent({ subagent_type: "Forge" })` |
-| (Whole-project long-context coding, OR named "Anvil") | Anvil (cross-vendor, Kimi K2.6 via Moonshot API) | `Agent({ subagent_type: "Anvil" })` |
+| (Whole-project long-context coding, OR named "Anvil") | Anvil (cross-vendor, LongCat 2.0 via OpenRouter; Kimi K2.6/Moonshot on explicit override) | `Agent({ subagent_type: "Anvil" })` |
 | (Cross-vendor audit, MANDATORY at E4/E5 in VERIFY) | Cato (read-only auditor, OpenAI-family GPT-5.x) | `Agent({ subagent_type: "Cato" })` |
 | (Architecture/design) | Architect | `Task({ subagent_type: "Architect" })` |
 | (Claude Code hooks, settings, commands, MCP, agents, API) | Claude Code Guide | `Task({ subagent_type: "claude-code-guide" })` — verify latest features before implementing |
@@ -68,9 +68,9 @@ When user requests custom agents:
 
 1. **Invoke Agents skill** via `Skill("Agents")` or follow CreateCustomAgent workflow
 2. **Run ComposeAgent** for EACH agent with DIFFERENT trait combinations
-3. **Extract prompt and voice_id** from ComposeAgent output
+3. **Extract the composed prompt** from ComposeAgent output
 4. **Launch agents** with Task tool using the composed prompts
-5. **Voice results** using each agent's unique voice_id
+5. **Report results** attributed to each agent's name
 
 ```bash
 # Example: 3 custom research agents
@@ -96,7 +96,7 @@ These are pre-built agents in the Claude Code Task tool. They are for **internal
 | `Explore` | Codebase exploration | Finding files, understanding structure |
 | `Plan` | Implementation planning | Plan mode |
 | `Forge` | Cross-vendor coder (OpenAI-family GPT-5.4 via `codex exec`) | Production-grade code at E3+ or "no shortcuts" directive |
-| `Anvil` | Cross-vendor coder (Kimi K2.6 via Moonshot direct API, 256K context) | Whole-project long-context reasoning where the entire repo matters |
+| `Anvil` | Cross-vendor coder (LongCat 2.0 via OpenRouter, default since 2026-08-08; Kimi K2.6/Moonshot direct on explicit `--model kimi-k2.6` override) | Whole-project long-context reasoning where the entire repo matters |
 | `Cato` | Cross-vendor auditor (read-only, OpenAI-family GPT-5.x via `codex exec --sandbox read-only`) | MANDATORY at E4/E5 in VERIFY — surfaces same-family blind spots |
 | ~~`BrowserAgent`~~ | **DEPRECATED** | Replaced by **Interceptor** skill (real Chrome, no CDP fingerprint) |
 | ~~`UIReviewer`~~ | **DEPRECATED** | Replaced by **Interceptor** skill |
@@ -107,29 +107,29 @@ These are pre-built agents in the Claude Code Task tool. They are for **internal
 | `GeminiResearcher` | Gemini-based research | Research skill workflows |
 | `GrokResearcher` | Grok-based research | Research skill workflows |
 
-**These do NOT have unique voices or ComposeAgent composition.**
+**These do NOT have unique personas or ComposeAgent composition.**
 
 ---
 
 ## Named Agents (Persistent Identities)
 
-Named agents have rich backstories, personality traits, and mapped voices. They provide relationship continuity across sessions. **Compose your own named-agent roster** — the examples below are illustrative; every PAI user defines their own personas.
+Named agents have rich backstories and personality traits. They provide relationship continuity across sessions. **Compose your own named-agent roster** — the examples below are illustrative; every PAI user defines their own personas.
 
-| Agent (example) | Role | Voice | Use For |
-|-----------------|------|-------|---------|
-| Architect | Architecture lead | Premium voice preset | Long-term architecture decisions |
-| Engineer | Senior engineer | Premium voice preset | Strategic technical leadership |
-| Security Specialist | Offensive security | Enhanced voice preset | Red-team review, vulnerability hunting |
-| Primary Researcher | Strategic research lead | Premium voice preset | Deep research + synthesis |
-| Secondary Researcher | Multi-perspective research | Alternate voice preset | Comparative analysis |
+| Agent (example) | Role | Use For |
+|-----------------|------|---------|
+| Architect | Architecture lead | Long-term architecture decisions |
+| Engineer | Senior engineer | Strategic technical leadership |
+| Security Specialist | Offensive security | Red-team review, vulnerability hunting |
+| Primary Researcher | Strategic research lead | Deep research + synthesis |
+| Secondary Researcher | Multi-perspective research | Comparative analysis |
 
-**Full backstories and voice settings:** Individual `agents/*.md` files (persona frontmatter + body) — define your own.
+**Full backstories:** Individual `agents/*.md` files (persona frontmatter + body) — define your own. Frontmatter carries `name`, `description`, `model`, `color`, and `persona`; there are no voice fields.
 
 ---
 
 ## Custom Agents (Dynamic Composition)
 
-Custom agents are composed on-the-fly from traits using ComposeAgent. Each unique trait combination maps to a different ElevenLabs voice.
+Custom agents are composed on-the-fly from traits using ComposeAgent. Each unique trait combination produces a distinct name, personality, and approach. ComposeAgent outputs `name`, `traits`, `color`, `expertise`, `personality`, `approach`, and `prompt`.
 
 ### Trait Categories
 
@@ -142,16 +142,7 @@ Custom agents are composed on-the-fly from traits using ComposeAgent. Each uniqu
 **Approach** (work style):
 `thorough`, `rapid`, `systematic`, `exploratory`, `comparative`, `synthesizing`, `adversarial`, `consultative`
 
-### Voice Mapping Examples
-
-| Trait Combo | Voice | Why |
-|-------------|-------|-----|
-| contrarian + skeptical | Clyde (gravelly) | Challenging intensity |
-| enthusiastic + creative | Jeremy (energetic) | High-energy creativity |
-| security + adversarial | Callum (edgy) | Hacker character |
-| analytical + meticulous | Charlotte (sophisticated) | Precision analysis |
-
-**Full trait definitions and voice mappings:** `skills/Agents/Data/Traits.yaml`
+**Full trait definitions:** `skills/Agents/Data/Traits.yaml`
 
 ---
 
@@ -269,7 +260,7 @@ When the Algorithm needs to delegate work, use this priority:
 | Priority | System | Trigger | Key Trait |
 |----------|--------|---------|-----------|
 | **1. DEFAULT** | Agent Teams | Any parallel work, task dependencies, coordination needed | Persistent, peer messaging, shared task list |
-| **2. EXPLICIT** | Custom Agents | {{PRINCIPAL_NAME}} says "custom agents" | Unique personalities, voices, one-shot |
+| **2. EXPLICIT** | Custom Agents | {{PRINCIPAL_NAME}} says "custom agents" | Unique personalities, one-shot |
 | **3. UNATTENDED** | Managed Agents | Overnight, CI, survives disconnects | Durable, sandboxed, cloud |
 | **4. INTERNAL** | Built-in types | Algorithm routing, specific subagent type needed | Designer, Architect, Engineer, etc. |
 
@@ -308,8 +299,8 @@ Distinct from functional teams (engineering, design, security, etc.). An Observe
 - **Master Architecture:** `~/.claude/PAI/DOCUMENTATION/PAISystemArchitecture.md` — authoritative system-of-systems reference
 - **Agents Skill:** `skills/Agents/SKILL.md` — Custom agent creation, workflows
 - **ComposeAgent:** `skills/Agents/Tools/ComposeAgent.ts` — Dynamic composition tool
-- **Traits:** `skills/Agents/Data/Traits.yaml` — Trait definitions and voice mappings
-- **Agent Personalities:** Individual `agents/*.md` files — Named agent backstories and voice settings
+- **Traits:** `skills/Agents/Data/Traits.yaml` — Trait definitions
+- **Agent Personalities:** Individual `agents/*.md` files — Named agent backstories and persona frontmatter
 - **Managed Agents:** https://www.anthropic.com/engineering/managed-agents — Anthropic cloud agent API
 
 ---

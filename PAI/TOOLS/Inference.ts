@@ -462,11 +462,15 @@ export interface OllamaConfig {
 
 const DEFAULT_GENERAL_MODEL = 'gemma4:latest';
 
+// Code-level defaults only apply if PAI_CONFIG.yaml fails to load — the live routing
+// decision is PAI_CONFIG.yaml's ollama.fallback_models, updated 2026-08-08 for the
+// qwen3_next_80b_a3b prod migration (was qwen3:30b-a3b). Keep this in sync manually;
+// there's no single source of truth shared between the two.
 const DEFAULT_FALLBACK_MODELS: Record<InferenceLevel, string> = {
   fast: 'qwen2.5-coder:7b',       // lightweight — fast-tier PAI calls are sentiment/classification
-  standard: 'qwen3:30b-a3b',      // Qwen3 MoE (~3B active), strong reasoning — replaces Sonnet for mode classification
-  smart: 'qwen3:30b-a3b',         // best available locally — replaces Opus for advisor calls
-  fable: 'qwen3:30b-a3b',         // Fable 5 has no local model; fallback to best local is graceful degrade not parity
+  standard: 'qwen3_next_80b_a3b', // Qwen3-Next-80B MoE, 47/53 unified bench — replaces Sonnet for mode classification
+  smart: 'qwen3_next_80b_a3b',    // best available locally — replaces Opus for advisor calls
+  fable: 'qwen3_next_80b_a3b',    // Fable 5 has no local model; fallback to best local is graceful degrade not parity
 };
 
 // Code default is safe (empty = all levels go Claude-first).
@@ -1123,6 +1127,16 @@ export interface OpenRouterConfig {
   apiKeyEnv: string;
   timeoutMs: number;
   fallbackToSonnet: boolean;
+  /**
+   * Short-name → full OpenRouter slug aliases (e.g. `hy3` → `tencent/hy3`).
+   * Read from `PAI_CONFIG.yaml` under `openrouter.model_aliases`. If a caller
+   * passes `--model <key>` that matches an alias, the alias resolves to the
+   * full slug before the API call. Pass a full provider/model slug (e.g.
+   * `tencent/hy3` or `moonshotai/kimi-k2.6`) to bypass the alias map entirely.
+   * Unknown short names fall through unchanged — OpenRouter will then return
+   * a 400 if the slug is invalid, which is fine for ad-hoc exploration.
+   */
+  modelAliases: Record<string, string>;
 }
 
 export async function readOpenRouterConfig(): Promise<OpenRouterConfig> {
@@ -1133,6 +1147,7 @@ export async function readOpenRouterConfig(): Promise<OpenRouterConfig> {
     apiKeyEnv: 'OPENROUTER_API_KEY',
     timeoutMs: 45000,
     fallbackToSonnet: true,
+    modelAliases: {},
   };
   try {
     const { readFile } = await import('fs/promises');
@@ -1143,6 +1158,18 @@ export async function readOpenRouterConfig(): Promise<OpenRouterConfig> {
     const cfg = Bun.YAML.parse(raw) as Record<string, unknown>;
     const or = cfg?.openrouter as Record<string, unknown> | undefined;
     if (!or) return fallback;
+    // Read the model_aliases map. YAML parses this as Record<string, string>
+    // when every value is a string. Be defensive about non-string values
+    // (don't let a malformed entry poison the whole map).
+    const aliasesRaw = or.model_aliases as Record<string, unknown> | undefined;
+    const modelAliases: Record<string, string> = {};
+    if (aliasesRaw && typeof aliasesRaw === 'object') {
+      for (const [k, v] of Object.entries(aliasesRaw)) {
+        if (typeof v === 'string' && v.length > 0) {
+          modelAliases[k] = v;
+        }
+      }
+    }
     return {
       enabled: or.enabled !== undefined ? Boolean(or.enabled) : fallback.enabled,
       baseUrl: typeof or.base_url === 'string' ? or.base_url : fallback.baseUrl,
@@ -1150,6 +1177,7 @@ export async function readOpenRouterConfig(): Promise<OpenRouterConfig> {
       apiKeyEnv: typeof or.api_key_env === 'string' ? or.api_key_env : fallback.apiKeyEnv,
       timeoutMs: typeof or.timeout_ms === 'number' ? or.timeout_ms : fallback.timeoutMs,
       fallbackToSonnet: or.fallback_to_sonnet !== undefined ? Boolean(or.fallback_to_sonnet) : fallback.fallbackToSonnet,
+      modelAliases,
     };
   } catch {
     return fallback;
@@ -1204,7 +1232,13 @@ async function inferenceOpenRouter(options: InferenceOptions): Promise<Inference
     };
   }
   const timeout = options.timeout ?? config.timeoutMs;
-  const model = options.model ?? config.model;
+  const requestedModel = options.model ?? config.model;
+  // Resolve short-name alias → full OpenRouter slug. Pass-through if no match.
+  // Rationale: lets callers say `--model hy3` instead of `--model tencent/hy3`,
+  // and keeps the actual OpenRouter catalog slugs in one place (PAI_CONFIG.yaml).
+  // Full slugs (containing '/') bypass the alias map by design — they can't
+  // collide with single-word aliases.
+  const model = config.modelAliases[requestedModel] ?? requestedModel;
   const url = `${config.baseUrl}/chat/completions`;
 
   const controller = new AbortController();
@@ -1438,8 +1472,12 @@ async function inferenceNous(options: InferenceOptions): Promise<InferenceResult
 }
 
 /**
- * Run inference against Ollama's /api/chat endpoint via HTTP fetch.
- * Uses Bun's native fetch — no child_process.spawn.
+ * Run inference against a local model host via HTTP fetch (Bun's native fetch —
+ * no child_process.spawn). Despite the name, this targets whichever protocol
+ * detectServerType() finds live: llama-server's OpenAI-compat /v1/chat/completions
+ * (the common case since the 2026-05-18 migration — see inference-routing.yaml)
+ * or Ollama's native /api/chat as a fallback. `backend: 'ollama'` is the external
+ * option name for historical/compat reasons; it is not Ollama-only.
  */
 async function inferenceOllama(options: InferenceOptions): Promise<InferenceResult> {
   const startTime = Date.now();

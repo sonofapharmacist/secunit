@@ -5,7 +5,7 @@ set -euo pipefail
 
 your-inference-host="your-inference-host"
 UBULLM_HOST="127.0.0.1"
-TEMP_PORT=11435
+TEMP_PORT=11436
 RESULTS="/tmp/bench-new-models-$(date +%Y%m%d-%H%M%S).txt"
 PAI_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DRY_RUN="${1:-}"

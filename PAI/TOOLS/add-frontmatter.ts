@@ -29,7 +29,6 @@ const FILES: Record<string, FM> = {
   "FEED.md":                 { category: "ops",        kind: "reference",  publish: "false" },
   "OPINIONS.md":             { category: "identity",   kind: "narrative",  publish: "false" },
   "OUR_STORY.md":            { category: "identity",   kind: "narrative",  publish: "false" },
-  "PRONUNCIATIONS.md":       { category: "voice",      kind: "reference",  publish: "false" },
   "RHETORICALSTYLE.md":      { category: "voice",      kind: "narrative",  publish: "false" },
   "WRITINGSTYLE.md":         { category: "voice",      kind: "narrative",  publish: "false" },
   "README.md":               { category: "identity",   kind: "index",      publish: "false" },

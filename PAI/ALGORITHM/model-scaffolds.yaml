@@ -1,0 +1,33 @@
+# Algorithm v8 — per-model scaffold injection.
+#
+# Read by hooks/lib/algorithm-v8.ts when PAI/ALGORITHM/LATEST >= 8.
+# The executing model is read from the session transcript (last assistant
+# message's `model` field). First class whose pattern matches wins, so cheap is
+# listed before mid ("gpt-6-luna" must not match mid via "gpt-").
+# Weaker models get more scaffolding, not less. Scaffolds are one-line
+# reminders injected into additionalContext, never phase ceremony.
+#
+# Routing policy (which model runs which task) lives in its own ISA.
+# This file only decides how much scaffolding a given executor receives.
+
+default_class: mid
+
+classes:
+  frontier:
+    match: ["claude-fable", "claude-mythos", "claude-opus-5"]
+    scaffolds: []
+
+  cheap:
+    match: ["claude-haiku", "flash", "luna", "devstral", "qwen", "gemma", "nemotron", "local"]
+    scaffolds: [intent, deliverables, reread, verify, parallel]
+
+  mid:
+    match: ["claude-sonnet", "claude-opus-4", "gpt-", "gemini-", "kimi", "glm-5", "deepseek-v4-pro"]
+    scaffolds: [reread, deliverables]
+
+scaffolds:
+  intent: "Before acting, restate the ask in one sentence."
+  deliverables: "If the ask has several parts, list them and check each off before finishing."
+  reread: "Before finishing, re-read the user's last message and confirm every explicit ask shipped."
+  verify: "Do not say done, fixed, or works without the tool output that proves it."
+  parallel: "Run independent tool calls in the same turn instead of one at a time."

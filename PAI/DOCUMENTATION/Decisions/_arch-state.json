@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "lastUpdated": "2026-09-27T19:44:33.930Z",
+  "algorithmVersion": "8.0.0",
+  "subsystems": [
+    "Life OS thesis (what PAI is for)",
+    "Life OS schema (USER/ shape)",
+    "System architecture (master doc)",
+    "Architecture summary",
+    "Algorithm system",
+    "Memory system",
+    "Skill system",
+    "Hook system",
+    "Agent system",
+    "Delegation system",
+    "Security system",
+    "Notification system",
+    "Observability system",
+    "Pulse system",
+    "CLI architecture",
+    "Prod model change checklist",
+    "Arbol (cloud execution)",
+    "Feed system",
+    "Fabric system",
+    "Terminal tabs",
+    "Tools reference",
+    "ISA format spec",
+    "Kohnfelder framework (CIA, STRIDE, DREAD, patterns, SDR)",
+    "Kohnfelder full synthesis"
+  ],
+  "pipelineDomains": [
+    "Security",
+    "Algorithm",
+    "Memory",
+    "Hooks",
+    "Observability",
+    "Pulse",
+    "Skills",
+    "Config",
+    "Notifications",
+    "Doc Integrity"
+  ]
+}

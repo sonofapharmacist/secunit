@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# pai-push — sync live work CLAUDE.md back to the profile and push pending commits
+#
+# Reverse of pai-sync. Run this after editing ~/.claude/CLAUDE.md on a work
+# machine so the changes aren't lost when the next work machine is set up.
+# Also pushes any unpushed commits to origin even when the profile is current.
+#
+# What it does:
+#   0. Snapshots unpushed commits, uncommitted changes, and profile diff
+#   1. Exits cleanly if all three are empty
+#   2. Shows unpushed commits if any
+#   3. Handles uncommitted changes: shows status, offers git add -A + commit
+#   4. Handles profile changes: shows diff, offers update, generates commit msg via Inference.ts
+#   5. Pushes all pending commits (profile commit + any pre-existing)
+#   6. Offers Claude zone classification if profile changed
+#
+# CLAUDE.MD — THREE ZONES:
+#   UNIVERSAL-STRUCTURAL:  MODES · Operational Rules · Operational Notes
+#                          PAI System routing table · Project-Specific Rules
+#                          → Port to personal main on personal machine
+#   WORK-SPECIFIC:         pai-sync/pai-push rules · work infra · corporate workflow
+#                          → Work profile only, never personal
+#   PERSONAL:              @-import lines · GP Identity/Voice · Life Goals · Munro
+#                          → Skip entirely
+
+set -euo pipefail
+
+CLAUDE_DIR="${HOME}/.claude"
+LIVE="${CLAUDE_DIR}/CLAUDE.md"
+PROFILE="${CLAUDE_DIR}/PAI/PROFILES/work/CLAUDE.md"
+INFERENCE="${CLAUDE_DIR}/PAI/TOOLS/Inference.ts"
+
+# ── 0. Snapshot state ─────────────────────────────────────────────────────────
+UNPUSHED=$(git -C "${CLAUDE_DIR}" log origin/main..HEAD --oneline 2>/dev/null || true)
+DIRTY=$(git -C "${CLAUDE_DIR}" status --porcelain 2>/dev/null || true)
+PROFILE_DIFF=$(diff "${PROFILE}" "${LIVE}" || true)
+
+if [[ -z "${PROFILE_DIFF}" ]] && [[ -z "${UNPUSHED}" ]] && [[ -z "${DIRTY}" ]]; then
+  echo "Work profile is current — nothing to push."
+  exit 0
+fi
+
+# ── 1. Show unpushed commits ──────────────────────────────────────────────────
+if [[ -n "${UNPUSHED}" ]]; then
+  UNPUSHED_COUNT=$(echo "${UNPUSHED}" | wc -l | tr -d ' ')
+  echo "Unpushed commits (${UNPUSHED_COUNT}):"
+  echo "${UNPUSHED}"
+  echo ""
+fi
+
+# ── 2. Handle uncommitted changes ────────────────────────────────────────────
+if [[ -n "${DIRTY}" ]]; then
+  echo "Uncommitted changes:"
+  git -C "${CLAUDE_DIR}" status --short
+  echo ""
+
+  read -rp "Commit all changes? [Y/n] " DOCOMMIT
+  if [[ ! "${DOCOMMIT}" =~ ^[Nn]$ ]]; then
+    git -C "${CLAUDE_DIR}" add -A
+
+    COMMIT_MSG=""
+    if command -v bun >/dev/null 2>&1 && [[ -f "${INFERENCE}" ]]; then
+      COMMIT_MSG=$(bun "${INFERENCE}" --level fast \
+        "Generate a conventional commit message: type(scope): description. Output ONLY the single commit line, under 72 chars. Use types: feat, fix, chore, docs, refactor." \
+        "$(git -C "${CLAUDE_DIR}" diff --cached --name-status | head -20)" 2>/dev/null | head -1 | xargs || true)
+    fi
+    COMMIT_MSG="${COMMIT_MSG:-chore(pai): commit pending changes}"
+
+    git -C "${CLAUDE_DIR}" commit -m "${COMMIT_MSG}"
+    echo "✓ Committed: ${COMMIT_MSG}"
+  else
+    echo "Uncommitted changes left as-is."
+  fi
+  echo ""
+fi
+
+# ── 3. Handle profile changes ─────────────────────────────────────────────────
+if [[ -n "${PROFILE_DIFF}" ]]; then
+  echo "Changes in live CLAUDE.md not yet in PAI/PROFILES/work/CLAUDE.md:"
+  echo "──────────────────────────────────────────────────────────────────────"
+  echo "${PROFILE_DIFF}"
+  echo "──────────────────────────────────────────────────────────────────────"
+  echo ""
+
+  read -rp "Update PAI/PROFILES/work/CLAUDE.md with live changes? [Y/n] " UPDATE
+  if [[ ! "${UPDATE}" =~ ^[Nn]$ ]]; then
+    cp "${LIVE}" "${PROFILE}"
+    git -C "${CLAUDE_DIR}" add PAI/PROFILES/work/CLAUDE.md
+
+    # Generate commit message via Inference.ts; fallback to hardcoded default
+    COMMIT_MSG=""
+    if command -v bun >/dev/null 2>&1 && [[ -f "${INFERENCE}" ]]; then
+      COMMIT_MSG=$(bun "${INFERENCE}" --level fast \
+        "Generate a conventional commit message: type(scope): description. Output ONLY the single commit line, under 72 chars. Use types: feat, fix, chore, docs, refactor. Scope is typically work-profile or claude-md." \
+        "$(printf '%s' "${PROFILE_DIFF}" | head -40)" 2>/dev/null | head -1 | xargs || true)
+    fi
+    COMMIT_MSG="${COMMIT_MSG:-chore(work-profile): sync CLAUDE.md from live work machine}"
+
+    git -C "${CLAUDE_DIR}" commit -m "${COMMIT_MSG}"
+    echo "✓ Committed: ${COMMIT_MSG}"
+  else
+    echo "Profile not updated."
+  fi
+  echo ""
+fi
+
+# ── 4. Push all pending commits ───────────────────────────────────────────────
+PENDING=$(git -C "${CLAUDE_DIR}" log origin/main..HEAD --oneline 2>/dev/null || true)
+if [[ -n "${PENDING}" ]]; then
+  PENDING_COUNT=$(echo "${PENDING}" | wc -l | tr -d ' ')
+  echo "Commits ready to push (${PENDING_COUNT}):"
+  echo "${PENDING}"
+  echo ""
+  read -rp "Push to origin/main? [Y/n] " DOPUSH
+  if [[ ! "${DOPUSH}" =~ ^[Nn]$ ]]; then
+    git -C "${CLAUDE_DIR}" push origin main
+    echo "✓ Pushed to origin/main."
+  fi
+  echo ""
+fi
+
+# ── 5. Offer zone classification if profile changed ───────────────────────────
+if [[ -n "${PROFILE_DIFF}" ]]; then
+  echo "Three zones to classify:"
+  echo "  (1) Universal-structural → port to personal main"
+  echo "  (2) Work-specific        → work profile only"
+  echo "  (3) Personal             → skip"
+  echo ""
+  read -rp "Open Claude to classify changes for personal main? [y/N] " PORT
+  if [[ "${PORT}" =~ ^[Yy]$ ]]; then
+    claude "pai-push: CLAUDE.md changed on this work machine. Here is the exact diff of what changed (captured before sync):
+
+${PROFILE_DIFF}
+
+Classify each diff chunk into one of three zones: (1) universal-structural — applies to any PAI machine, should be ported to personal main CLAUDE.md; (2) work-specific structural — relevant only to work machine setup or workflow, work profile only; (3) personal — skip. For zone-1 items, show exactly what text to add to the personal CLAUDE.md and where it goes. I will apply those manually on my personal machine."
+  fi
+fi

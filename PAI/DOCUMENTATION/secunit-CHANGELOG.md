@@ -1,0 +1,267 @@
+# Changelog
+
+All notable changes to secunit are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning follows [SemVer](https://semver.org/).
+
+---
+
+## [Unreleased]
+
+---
+
+## [0.8.1] — 2026-09-27
+
+### Security
+- **The release tool no longer publishes its own scrub list.** `PAI/TOOLS/release.ts` held the maintainer's personal identifiers as literals in its sanitize map and identifier-gate patterns, and the gate exempted that file, so every release shipped them.
+  - **Where they live now:** a private module under `PAI/USER/Config/`, which the release strips. `release.ts` refuses to run without it; set `SECUNIT_ALLOW_NO_PRIVATE_CONFIG=1` on a fork with nothing to scrub.
+  - **No exemption:** the identifier gate now scans `release.ts` like every other file.
+  - **Private tests:** a new work-client-skill pattern caught two tests that assert on a private routing config (`skill-routing.test.ts`, `tier-inference.test.ts`). They are no longer shipped.
+- **Repository history reset.** To remove earlier copies of those identifiers, `main` was replaced with a single commit and the older release tags were deleted. If you cloned before 0.8.1, re-clone. The entries below are kept as the change record.
+
+---
+
+## [0.8.0] — 2026-09-27
+
+Algorithm v8.0.0: the doctrine stays, the ceremony goes, and enforcement moves from prompts into hooks. This release also brings a measurement pipeline for models (one command for both benches, a canonical scoreboard, and a threat grader corrected after two parsing bugs), research agents backed by four different model families, and a semantic doc-drift checker that proposes edits instead of silently applying them. Since the Claude 5 generation, the executing model largely ignored v7's mode routing. Across 178 completed v7 ISAs, only 21% of checked criteria had a checkable evidence line (`Decisions/algorithm-version-v8.0.0.md`). v8 stops asking the model to perform process and makes the harness hold the parts that matter.
+
+### Changed
+- **Algorithm v7.1.1 → v8.0.0** (`PAI/ALGORITHM/v8.0.0.md`, 729 → 119 lines).
+  - **Kept, verbatim:** the verification doctrine: the ISC granularity rule, probe tables, forbidden language, the live-probe / advisor / cross-vendor audit rules, and reproduce-first.
+  - **Cut:** E1–E5 thinking and delegation floors, phase narration, ISC count floors, the intent-echo block, and the stop-the-line closing block.
+  - **Criteria only when there's a probe:** write criteria only when "done" has a nameable probe, either in an ISA or in a short Goal / Criteria / Decisions file beside a project's notes.
+  - **Moved on demand:** parallelism scan, premortem, preflight gates and deliverable manifest now live in `PAI/ALGORITHM/on-demand.md`.
+  - **Rationale:** `Decisions/algorithm-v8-harness-first.md`.
+- **Per-prompt context line (breaking).** `PromptProcessing` now emits `REASON | SOURCE | EXECUTOR | SHELL_MODE`.
+  - **Removed:** `MODE:` and `TIER:`, and the `/e1`–`/e5` overrides.
+  - **Fail-safe:** a classifier failure logs `SOURCE: fail-safe` and never escalates to Algorithm ceremony.
+  - **Scaffolds:** cheaper executing models get more one-line scaffolds (`PAI/ALGORITHM/model-scaffolds.yaml`). The model is read from the transcript, not guessed from the prompt.
+  - Any local tooling that parses `MODE:` needs updating.
+- **Public `CLAUDE.md` and README** rewritten for v8. The install check is now "what does your context line say?", since there are no mode banners.
+- **Subagent default model set by the harness.** The Pulse `agent-guard` hook sets `model: haiku` on Explore, general-purpose and claude-code-guide spawns that pass no `model:`. An explicit model always wins. Routing table: `PAI/DOCUMENTATION/Routing/ModelRouting.md`.
+- **Forge goes to OpenRouter first.** `ForgeProgress.ts` defaults to OpenRouter `openai/gpt-5.4`; `--codex` restores codex-first with OpenRouter as fallback.
+- **`NightlyCodeReview.ts` default reviewer** is Gemini 3.8 Flash (medium), run in the agy sandbox. It reviews every chunk and falls back to the previous Sonnet path only if every chunk fails. `--reviewer sonnet` keeps the old flow. `--dry-run` now prints the findings it would queue. The local-model host is read from `PAI_CONFIG` instead of a hardcoded address.
+- **Research agents run on four model families** (ADR `family-diverse-routing-2026-09-26.md`). Previously several "researchers" were Claude personas with a vendor's name.
+  - `CodexResearcher`: OpenAI GPT-6 Luna through the new `PAI/TOOLS/OrWebResearch.ts` (OpenRouter plus web search, about $0.007 per call).
+  - `GrokResearcher`: xAI Grok 4.7 through the same tool.
+  - `GeminiResearcher`: Gemini through `AgyJail` research mode. Only `search_web` / `read_url_content` are allowed, and the grounded search outputs are returned as the evidence, with agy's prose as a secondary summary.
+  - Each wrapper has `WebSearch` disallowed, so the research has to come from the named model. `PerplexityResearcher` is deprecated.
+- **DocIntegrity's semantic layer no longer slows or blocks your turn.**
+  - **Before:** the semantic drift check ran inline in the Stop hook, costing about 45s per stop, and auto-applied its edits. One early auto-applied edit was wrong about a security inspector.
+  - **Now:** a detached worker (`hooks/handlers/DocSemanticWorker.ts`) *proposes* edits to a queue, calling Claude only (no local-model fallback). Pending proposals, worker failures and trial check-ins appear at session start (`hooks/lib/doc-review-digest.ts`). The Stop hook takes under a second.
+  - **Review tool:** `PAI/TOOLS/DocEditReview.ts` lists, applies and rejects proposals; a rejection requires a reason. `stats` reports the acceptance rate. The prompt forbids claims about deployment state and adding private names to public docs.
+- **Threat-model Tier-0 routing** adds Grok 4.7 as an alternate (mean 8.89/10 over 3 runs, lowest run 8.16). A single threat run is now treated as a band, not a rank: routing decisions need 3 runs, reported as mean and minimum.
+- **`DualCheck`'s second reviewer** is Solar Pro 4 (it was MiniMax M3). The default timeout is 300s because that leg reasons before answering. The skill documents filtering by convergence: a finding both models raise is a likely real issue, while a finding from one model is a lead.
+- **Bench tools resolve the local inference host from `PAI_CONFIG`** (`FreeTierEvals/local_host.ts`, and a matching stdlib reader in `llamacpp_eval.py`). No host or IP remains in source. A config-read fallback is logged, and `llamacpp_eval.py` now exits if the host is unreachable instead of scoring every task 0.
+- **`TLDRSurface.ts`** rotates its suggestions file to 60 days. It had grown unbounded.
+
+### Added
+- **v8 enforcement hooks,** all gated on `PAI/ALGORITHM/LATEST` ≥ 8. Writing `7.1.1` to `LATEST` restores v7 behavior.
+  - The observe gate blocks leaving `observe` without a Goal, a criterion, and an `Anti:` criterion.
+  - The completion lint refuses `phase: complete` while any `[x]` criterion lacks an evidence line under `## Verification` that quotes an action or result.
+  - `ISASync` writes a one-line completion breadcrumb.
+  - `LoadContext` asks the resume-time scope questions.
+- **`PAI/TOOLS/AgyJail.ts`** runs the Antigravity CLI (`agy`) inside a bubblewrap sandbox.
+  - **Isolation:** tmpfs `/home`, a private state dir, a cleared environment, and a config rewritten on every call with no tool allow-list and no MCP servers.
+  - **Tripwire:** any tool-call attempt is a violation (exit 4). Quota and capacity errors count as harness errors.
+- **`PAI/TOOLS/AlgorithmAB.ts`** scores completed ISAs by Algorithm version: evidence rate, Anti coverage, and cross-vendor audit adherence.
+- **`PAI/TOOLS/FreeTierEvals/workload_bench.ts`** benchmarks models on your own recurring tasks and reports pass^k.
+  - **Scoring:** deterministic gates plus an LLM judge, with `--rejudge` to re-grade saved outputs. A judge failure never counts as a pass.
+  - **Bring your own use cases:** they live in `USER/Evals/WorkloadBench/UseCases/`, which is private and not shipped.
+- **Gemini provider for the threat-model bench.**
+- **`PAI/TOOLS/FreeTierEvals/bench_model.ts`**: one command runs the 53-point unified bench and the threat-model bench (3 runs by default, `--threat-runs N`) and appends one row to `model_scoreboard.jsonl`.
+- **`scoreboard_report.ts`** renders the score tables from the scoreboard into a marked block of a markdown note, and `bench_model.ts` refreshes it after every run. Documented exclusions for harness-failure rows live in `scoreboard_meta.json`. It refuses to overwrite a table with an empty one.
+- **`rescore_threat.ts`** re-derives every stored threat score from the grader's raw output with the current parser, without making any API calls.
+- **`regrade_variance.ts`** grades one stored plan N times to separate grader noise from model noise.
+- **ISA branching.**
+  - **Spawning:** `skills/ISA/Tools/SpawnBranch.ts` turns a `## Branches` entry into its own ISA, and handles the `parent:` / `branches:` links and the `spawned:` marker.
+  - **Format:** `IsaFormat.md` documents the `## Branches` section.
+  - **Close gate (staged):** refuses `phase: complete` while a branch has no `spawned:`, `filed:` or `dropped:` marker. It is part of the draft `PAI/ALGORITHM/v8.1.0.md`, which is not yet in `LATEST`, and is active only at Algorithm ≥ 8.1.
+- **`Inference.ts` `maxTokens` option** for the local OpenAI-compatible path (default 2048).
+- **Release gate: fork-catalog freshness check.** An advisory warning when `ForkArchitectureCatalog.md`'s ADR count or Algorithm version drifts from the tree.
+
+### Security
+- **`Inference.ts` agy backend is now sandboxed.** It previously ran `agy` with `--dangerously-skip-permissions`, the caller's full environment (API keys included), and all of `$HOME` trusted, while being fed untrusted input such as scraped article text. It now calls `AgyJail`, and any tool attempt fails the inference call.
+- **`RoutingDriftCheck.ts`** now flags `service-down` when a host answers on one inference port but refuses on a sibling port. Previously, a stopped fast-tier service stayed invisible behind a healthy main tier. Hosts are read from `PAI_CONFIG`.
+- **`RulesInspector` fails closed on an unexpected response shape.** Any inference response that was not an explicit `BLOCK` was treated as `ALLOW`. That included an empty object, an unknown decision, and an array. It now returns `require_approval`, and regression tests cover all three shapes. (The inspector is inert unless you create a `SECURITY_RULES.md`.)
+- **`Inference.ts` JSON extraction picks the right candidate.** When a response contained both an array and an object, the extractor could parse the wrong one. It now takes the object first unless an array encloses it. That fixes single-element arrays without reopening the fail-open where prose like `Rule [3] applies: {...}` parsed as an array. The fix covers all 7 extraction sites.
+- **Release gate strips bench run artifacts** (`sweep_results/`, the scoreboard, rescore and unified-results JSONL, `__pycache__/`). Their per-run JSON named private hosts, paths and a VPN address.
+
+### Fixed
+- **Forge's OpenRouter fallback never worked.** Since 2026-08-08 it used `openai/gpt-5.4-codex`, which is not a valid OpenRouter model ID (HTTP 400). It now uses `openai/gpt-5.4`.
+- **Two threat-grader parsing bugs inflated or deflated scores.**
+  - A declared `coverage` value overrode a 4/4 breakdown. One model lost 4 points this way.
+  - A 1–5 specificity mean hit the ×3 cap for full marks, inflating those runs by 1.2–1.4 points.
+  - 23 of 145 stored results were wrong, some going back to July. `rescore_threat.ts` corrects stored history.
+- **Coding battery timeouts discarded finished work.** A hard 900s subprocess limit killed slow reasoning models mid-battery, and the uncaught timeout also threw away their already-scored T and R batteries. Opted-in endpoints now get a longer budget.
+- **The semantic doc checker never read a doc.** It resolved doc paths against the wrong directory, so the model only ever saw source files.
+- **`Inference.ts` logged "usage limit" for plain timeouts.** It now prints the real error.
+
+### Known limitations
+- The completion lint and breadcrumb fire on Write/Edit only. An ISA closed with a shell edit (`sed -i`) skips both, so close ISAs with Edit.
+- The completion lint checks that an evidence line has a checkable shape. It does not verify that the quoted output is real.
+- Semantic doc-drift proposals still need a human or DA review. Early acceptance rates were low, and the layer is on a two-week trial with a keep-or-remove threshold of 20% accepted.
+- The threat-model bench still saturates: competent models score 4/4 on coverage, so one run separates models into bands, not ranks. A v2 rubric is in design.
+
+---
+
+## [0.7.2] — 2026-09-11
+
+### Removed
+- **`Daemon` skill dropped** (46 → 45 shipped skills). It published a public profile site built from private PAI sources, gated by a `SecurityFilter.ts` whose name blocklist was empty by design and loaded at runtime from a customization file that no install creates — so the name-redaction class silently did nothing while paths, credentials, aliases, and internal endpoints all filtered correctly. The skill's own self-test passed 5/5 because it had no name case. Removed rather than repaired. The `publish:` frontmatter field in `USER/` templates is retained but now has no consumer.
+
+### Fixed
+- **Release mechanics.** Version bookkeeping during a release is now tied to the release actually succeeding, rather than running ahead of it. The published version is recorded once the push completes, so the version the harness reports and the version that shipped cannot disagree. Applies uniformly however the version is chosen; a release that fails a gate or is cancelled at the prompt records nothing.
+
+---
+
+## [0.7.1] — 2026-09-10
+
+### Fixed
+- **v0.7.0 shipped 233 vendored files under `PAI/PAI-Install/minimal/node_modules/`.** Removing the wizard left a gitignored `node_modules` on disk; staging copied it, no gate scans inside `node_modules`, and `release.ts`'s strip step only removed three fixed paths despite a comment claiming "everywhere". Strip is now a recursive walk that removes every `node_modules` directory in the stage and logs what it found. The shipped files were an unmodified copy of the MIT-licensed `yaml` package; nothing private, just wrong. v0.6.1 had zero such files, so this was a one-release regression.
+
+---
+
+## [0.7.0] — 2026-09-10
+
+Onboarding rewrite plus two new enforcement layers: Bash zero-access paths at tool time, and a local-only semantic leak review at release time.
+
+### Changed
+- README "why this fork" now names the three enforcement claims (fail-closed inspector chain, session canary, Bash zero-access paths) instead of "security instrumentation".
+- Removed `secunit-feature-diff.md`; superseded by `ForkArchitectureCatalog.md`.
+- **README rebuilt as layered onboarding.** The first screen is now install, three verified paste-able prompts ("Your first ten minutes" — one each for the security gate, skill activation, and memory), a four-concept map (modes / memory / skills / gates), and a "make it yours" section pointing at CLAUDE.md rules, `CreateSkill`, and `CreateCLI`. Everything it used to say — upstream diff, security architecture, inference routing, backend switching, knowledge pipeline, mobile access — moved intact to `PAI/DOCUMENTATION/secunit-DeepDive.md`. 457 lines → under 150.
+- **`/interview` is no longer the installer's step 3.** It is Life OS depth (mission, goals, preferences), not harness setup; the installer and README now point at the first-ten-minutes prompts first and offer `/interview` as optional.
+- **Public `CLAUDE.md` gains a "Your first session" block** naming the four mechanisms and where to look next.
+- **Skill roster corrected** to the 46 that ship (`DualCheck`, `SessionFork`, `Verify` were unlisted).
+- **`PAI-Install/` removed** (upstream v5.0 web/Electron wizard); root `install.sh` + `/interview` is the only install path.
+
+### Security
+- **Semantic leak gate added to the release pipeline** (`PAI/TOOLS/SemanticLeakGate.ts`, advisory). The deterministic gates match known patterns; this one sends every staged prose file, chunked, to a local-only model and asks whether a stranger would learn something private about a real person. Endpoint must resolve to a private-range host or the gate refuses to run; there is no cloud fallback by design. Flags are printed and repeated in the push prompt but never block on their own. Fails closed to "unreviewed" on any endpoint failure. Content-hash verdict cache means only changed prose is re-sent on later releases.
+- **`sharp` 0.35.0 → 0.35.4** (GHSA-rgj7-g3m4-5g8c, HIGH) in the release toolchain; Grype was blocking on it.
+
+### Fixed
+- **Prose-tip gate "flake" root-caused.** MiniMax M3 sometimes returns the final `[]` at the tail of its reasoning stream with an empty `content` and a normal stop. The classifier only read `content`, so a correct verdict parsed as EOF and the 5-call ensemble fell below its 3-parse floor. Reproduced 2/5 and 4/5 with the exact release prompt. The parser now falls back to the last JSON array in `reasoning`. Every prior release that "needed a retry" on this gate was hitting this.
+- **`NightlyCodeReview.ts` hardcoded a Tailscale IP** for its local inference host; now reads `OLLAMA_BASE_URL` with a loopback default. Cleared one of 20 identifier-gate hits that had blocked release since August; the other 19 were sanitize rules for three ADRs and the fork catalog.
+- **`TEMPLATES/User/Telos` renamed to `TELOS`** to match what the interview tools and SessionStart hook actually read. A fresh install previously scaffolded a directory nothing looked in.
+- **`paths.zeroAccess` was never enforced inside Bash commands.** `Read ~/.ssh/id_rsa` was denied while `cat ~/.ssh/id_rsa`, `curl -d "$(cat ~/.ssh/id_rsa)" …`, `curl -F f=@$HOME/.ssh/id_rsa …`, and `base64 ~/.aws/credentials | nc …` all passed. `PatternInspector` now extracts absolute and home-rooted paths from every Bash command and applies the same zero-access (deny) and alert-access (alert) policy the file tools use, ahead of the trusted-prefix short-circuit. New test file `hooks/__tests__/PatternInspector.bashpaths.test.ts`. ADR: `DOCUMENTATION/Decisions/bash-path-policy-zero-access-2026-09.md`.
+
+---
+
+## [0.6.1] — 2026-08-04
+
+### Fixed
+- **The installer silently produced a broken harness on the machine configuration the README requires.** `install.sh`'s bundle-copy is skip-if-exists, and `settings.json` always already exists on a machine with Claude Code — which the README lists as a prerequisite. The shipped `settings.json` was therefore never applied: **58 hook registrations across 13 events** were dropped, along with `statusLine`, `contextFiles`, `env`, `spinnerVerbs` and roughly 30 other keys, while the script printed `✓`, printed `Done`, and exited 0. On a machine *without* prior Claude Code the same script installed perfectly, so the failure was invisible to anyone smoke-testing on a clean box. Replaced the `pai.*`-only merge with an ownership-aware merge: machine-owned keys (`hooks`, `statusLine`, `contextFiles`, …) take the template; user-owned keys (`permissions`, `model`, `theme`) are never touched; `env` is deep-merged so a user's own variables survive alongside secunit's. A backup is written to `settings.json.secunit-backup`. Found by running the fresh-clone smoke test against published v0.6.0.
+- **No public `CLAUDE.md` shipped at all.** The release correctly strips the private root `CLAUDE.md` (it carries identity, contacts, and business context) but staged no public replacement — it was absent from the repo root, from `PAI/TEMPLATES/`, and from `release.ts`'s promotion rules, even though the same mechanism already promotes `secunit-README.md` to `README.md`. A new user's DA booted with no modes, no format templates, and no context routing. Added `PAI/TEMPLATES/CLAUDE.md` (modes, operational rules, path routing) and a promotion rule that **throws rather than warns** when it is missing, since a release without it is precisely this bug.
+- **`permissions` is no longer merged from the template.** Unioning allow-lists would silently widen a user's security posture on install. The user's block is now preserved verbatim.
+
+### Added
+- **Post-install verification.** The installer now asserts its own outcome — hook-event and registration counts, `CLAUDE.md` presence, and the `skills/`, `hooks/`, and `PAI/` trees — then prints `Install INCOMPLETE` and exits non-zero with a named recovery path when any check fails. Copying a file is not the same as the configuration being in effect; a silent `Done` over a dead harness can no longer happen.
+- **`PAI_INSTALL_ROOT`.** Redirects the install target so the installer can be smoke-tested against a scratch directory instead of a real `~/.claude`. Unset, behavior is byte-identical to before.
+- **README next-steps names a concrete check.** Replaced the bare `/interview` pointer with what the installer does to `settings.json`, where the backup lands, and a one-question verification ("ask your DA what mode you're in") that confirms the harness actually loaded.
+
+### Security
+- **Two known-vulnerable dependency versions in the release toolchain.** `undici` 7.28.0 → 7.29.0 (GHSA-4cwx-7wf7-3272, HIGH) and `brace-expansion` 5.0.8 → 5.0.9 (GHSA-rgw5-rvv9-x895, HIGH). Pre-existing and unrelated to the installer work, but release-blocking; Grype confirmed clean after the bump.
+
+---
+
+## [0.6.0] — 2026-08-04
+
+### Added
+- **`DualCheck` is now a public skill.** Adversarial code-review check using two independent models called directly and in parallel (Devstral Medium via Mistral's own API, MiniMax M3 via OpenRouter's own API), reporting both verdicts side by side rather than treating either as the deciding vote. Was built in a prior session but never added to the release allow-list — the private-zone gate correctly flagged it as unlisted, review confirmed it's generic (env-var/secret-store key names only, no hardcoded credentials or business context) and safe to ship.
+
+### Fixed
+- **Release ADR `containment-enforcement-consolidation.md` quoted real principal-identifying strings** (home-directory username, personal email, employer name, machine hostnames) as prose examples of what the identifier gate's pattern list scans for. Genericized to placeholder language while preserving the documented reasoning — the identifier gate correctly caught this as a real leak, not a false positive, since an ADR that ships publicly by default shouldn't contain literal private values even when quoting them as illustrations.
+- **Two `settings.json` prose tips leaked a Tailscale-tailnet-specific hostname alias** (`pai:31337`) distinct from the generic `localhost:31337` convention used everywhere else in the codebase. Genericized or removed the port reference; the prose-tip gate's classifier correctly flagged both instances.
+- **`generateSBOM()` can report zero components for a reason unrelated to the original pre-strip fix.** If `PAI/TOOLS/node_modules` isn't installed at all (rather than merely stripped post-generation), cdxgen has nothing to enumerate and produces a technically-valid but empty SBOM — same failure signature as the bug the earlier SBOM-ordering fix addressed, different root cause. No code change; documenting the precondition here since the gate's error message doesn't distinguish the two cases.
+- **Two known-vulnerable dependency versions in the release toolchain.** `brace-expansion` 5.0.7 → 5.0.8 (GHSA-mh99-v99m-4gvg, HIGH), `tar` 7.5.19 → 7.5.21 (GHSA-r292-9mhp-454m, MEDIUM). Grype flagged both during a routine release scan; confirmed clean after the bump.
+
+---
+
+## [0.5.1] — 2026-07-22
+
+### Fixed
+- **SBOM generation now runs while the complete dependency graph is still available.** `release.ts` generates the CycloneDX 1.5 SBOM before stripping staged `node_modules`, verifies that cdxgen produced valid JSON even when its summary-table renderer exits non-zero, and scans that fresh artifact rather than an empty or stale dependency view.
+- **Grype now fails closed on SBOM and vulnerability-scan errors.** A missing or invalid SBOM can no longer skip Grype and report success; HIGH or CRITICAL findings block the release, while visible MEDIUM/LOW findings remain reviewable without being silently swallowed.
+- **Vulnerable package versions in the release toolchain were upgraded or pinned.** Updated `undici` to 7.28.0, `tar` to 7.5.19, `sharp` to 0.35.0, `protobufjs` to 7.6.5, `brace-expansion` to 5.0.7, `js-yaml` to 4.3.0, and Vite to 6.4.3. The resulting 312-component SBOM contains no HIGH or CRITICAL findings.
+- **`Inference.ts` CLI silently dropped the query on malformed args.** A bare positional word before flags (e.g. a level name typed without its `--level` prefix) was swept into `positionalArgs` instead of erroring; with 3+ positional args the old length check (`< 2`) passed and only the first two were used, silently discarding the real query. Now errors loudly with a diagnostic hint when positional-arg count isn't exactly 2.
+- **`SessionFork`'s `Fork.md` handoff defaulted to `claude --continue --fork-session`, which can silently fork the wrong session.** `--continue` resumes the most recent conversation *in the current directory*, not a specific session — with concurrent sessions in the same working directory, it forks an unrelated conversation with no error. Default is now `claude --resume {parent_session_id} --fork-session`, using the session id already captured in the fork's tracking file.
+- **`SessionFork`'s `Fork.md` Step 5 treated the native fork invocation as something the assistant could attempt and retry on failure.** It cannot — `--fork-session` is a top-level shell flag that launches a new `claude` process, and nested `claude` invocation is blocked. Step 5 now correctly frames this as a user handoff: the assistant prepares the tracking file and hands the exact command to the user to run interactively.
+
+### Added
+- **`SessionFork`'s `Merge` workflow gained same-parent delta-mode reintegration.** When `Merge` runs in the exact same process as the fork's recorded parent session (a mechanical `$CLAUDE_CODE_SESSION_ID` comparison against the tracking file's `parent_session_id`, never a guess), it surfaces a compressed delta — only what's newly true — instead of restating context the parent session already holds. Falls back to full-verbose on any ambiguity or mismatch; the fallback direction is fixed, never a coin flip. `Conclude`'s full anchored artifact is unchanged and always written to disk regardless of reader mode.
+- **`SessionFork`'s `Conclude` workflow gained a scope-boundary rule.** C/R/L (Conjectured/Refuted-by/Learned/Criterion-now) fields now exclude pre-fork backstory — content describing why the fork was spawned rather than what happened inside it — since that context already exists verbatim in the fork's tracking JSON. This is a mechanical content-scope test, not a reader-awareness guess, so it stays safe under the same class of risk that makes naive "be less verbose" summarization fixes unreliable.
+- **`CreateSkill`'s `UpdateSkill` workflow gained a Content Consistency checklist item**, triggered after 2+ edit passes to the same file(s) in one session — checks for near-duplicate rationale and stale summary lines left standing next to a later, corrected detailed instruction.
+
+---
+
+## [0.5.0] — 2026-07-21
+
+### Added
+- **`install.sh` now installs system tools PAI's hooks and skills rely on:** `rtk` (Rust Token Killer, via its official installer), plus `jq`/`rg`/`fd`/`bat` via apt/brew/dnf/pacman auto-detection. Without `rtk`/`jq`, `hooks/ContextReduction.hook.sh` silently no-ops instead of compressing Bash output — this closes that gap by default on a fresh install. Prints an upfront banner naming each tool and exactly what degrades if it's skipped. Handles Debian's `fd-find`→`fdfind` binary rename via symlink, and detects root-vs-sudo so it works both on a normal dev machine and inside a container with neither `sudo` nor a non-root user.
+- **Opt out of tool installation** via `SECUNIT_SKIP_TOOLS=1` (always available — for CI/scripted installs) or an interactive `[Y/n]` prompt (only shown when stdin is a TTY, so non-interactive runs never hang).
+- `test-secunit-install.sh` now exercises both the default-install and `SECUNIT_SKIP_TOOLS=1` paths in the same Docker E2E run.
+
+### Fixed
+- Release identifier gate: extended sanitization to catch personal machine names, a Tailscale IP, and a LAN IP across `PULSE.toml`, `NightlyCodeReview.ts`, `threat_model_bench.ts`, and two `DOCUMENTATION/Decisions/` docs that had no prior sanitization entries.
+- `PAI/TOOLS/FreeTierEvals/threat_model_bench_results/` (personal benchmark run history) is now stripped from the release rather than shipped — it's run data, not a template.
+- Redacted a burned (already-rotated) Anthropic API key that was sitting in plaintext in `passage-secret-disclosure-guard.md`.
+- `hooks/ContextReduction.hook.sh` now warns to stderr when `rtk`/`jq` are missing instead of silently passing the command through unmodified — the silent case was previously indistinguishable from the hook working correctly.
+- `release.ts`'s own success message no longer prints a hardcoded personal Tailscale domain; derives the printed remote from `SECUNIT_REMOTE` instead.
+- `pai.repoUrl` in `settings.json` had a typo in the GitHub handle (`sonsofapharmacist` → `sonofapharmacist`).
+
+---
+
+## [0.4.0] — 2026-07-05
+
+### Added
+- **Backend-switch scripts:** `glm.sh`, `minimax.sh`, `offline.sh`, `offline-off.sh` at repo root — source them to switch Claude Code's own CLI session (not just `Inference.ts` subtask calls) to Z.ai GLM, MiniMax M3, or a local Ollama host, and back to Anthropic direct. New `PAI/backends/` source directory; `release.ts` promotes its `.sh` files to repo root with the executable bit set, same pattern as `install.sh`. `glm.sh`/`minimax.sh` read credentials via `passage` if installed, else fall back to `GLM_API_KEY`/`MINIMAX_API_KEY` env vars. `offline.sh` takes its target host from `PAI_OFFLINE_HOST` (defaults to `127.0.0.1`) instead of a hardcoded address. Documented in the README under "Backend switching."
+
+### Fixed
+- Release identifier gate: `PAI/PROFILES/work/CLAUDE.md` carried a personal domain and a username-derived path; added to the sanitizer so the staged copy scrubs both without touching the live file.
+
+---
+
+## [0.3.0] — 2026-06-29
+
+### Added
+- **Backend fallback chain:** `BackendHealth.ts` health CLI probes all configured inference backends with clean ✅/❌ output. Resilience chain Anthropic → Z.ai GLM → MiniMax M3 → Ollama autogen, with `FaultTaxonomy.md` documenting failure mode → fallback action mappings. `Inference.ts` now treats `ECONNREFUSED`/`ETIMEDOUT`/HTTP 503 as usage-limit signals so it fails over instead of hanging.
+- **Pulse nightly autopilot code review:** `NightlyCodeReview.ts` runs a report-only `/code-review high` pass against configured repos via `claude -p`, writing findings to a JSONL queue. Never auto-fixes — findings are queryable over HTTP via the Pulse `code-review` module. Wired into `pulse.ts` module loading and HTTP route dispatch.
+- **SettingsIntegrityCheck hook:** validates `settings.json` structure at session start.
+- **Incremental release commits:** `release.ts` now clones existing secunit history and commits only the diff, instead of force-pushing a single squashed snapshot each time. First release (empty remote) still falls back to a fresh `git init`. `--force-snapshot` preserves the old wipe-and-force behavior for emergencies. Forgejo and GitHub pushes share one work dir so both land the same commit.
+- **release.ts defaults to push:** dropped the old two-step "scan, then re-run with `--push`" friction — gates passing now leads straight to the confirm prompt. Use `--scan-only` to stop after the gate.
+
+### Fixed
+- Pulse `loadPulseConfig()` was silently dropping unlisted TOML sections, so `code-review.enabled` never reached `loadModules()` despite being set in `PULSE.toml`.
+- Pulse shutdown could take up to 60s (or hang indefinitely) on SIGTERM: `Bun.sleep()` ignores `AbortSignal`, so the cron heartbeat loop wasn't interruptible, and a detached Telegram supervise-retry loop kept the process alive after `main()` returned. SIGTERM now exits in ~1s.
+- Release gate hardening: `PRIVATE_SKILL_DIRS` coverage gaps, sanitizer coverage gaps, and a stale ADR stub (Kohnfelder full synthesis subsystem entry) that had been wiped back to `status: stub` by an unrelated sync commit.
+
+## [0.2.0] — 2026-06-01
+
+### Added
+- **ADR system:** `ArchitectureSummaryGenerator.ts` auto-stubs Architecture Decision Records on structural threshold changes (algorithm version bump, new subsystem, new pipeline domain). Stubs block release via `release.ts` gate.
+- **Architecture knowledge domain:** BM25-indexed ADRs in `MEMORY/KNOWLEDGE/Architecture/` surface during OBSERVE via MemoryRetriever.
+- **Algorithm v7.1.0:** ISA state surfaces as a one-line stub entry; full state read directly. No AI narration of phase or progress — narrated status embeds fabrications as ground truth.
+- **Git tags:** releases now create an annotated tag (`v{version}`) on the secunit repo.
+- **CHANGELOG, SECURITY.md, GitHub issue/PR templates:** standard public release scaffolding.
+
+### Fixed
+- `settings.json` hook commands used hardcoded system path (`/home/$USER/.bun`) instead of `$HOME`.
+- `QualityTestModels.ts` usage string had hardcoded system path.
+- `PROFILES/work/CLAUDE.md` referenced a username-derived Claude project memory path.
+- Release identifier gate now catches the system username and Claude-derived project memory paths.
+
+### Changed
+- secunit README: version headline updated to v7.1.0; ADR gate section added to production-hardened.
+
+---
+
+## [0.1.0] — 2026-05-04
+
+Initial release.
+
+### Added
+- **Algorithm v7.0.0** — reliability release targeting documented failure modes: 8.59% fail-safe rate, 146 failure events in May 2026, Jaroslawicz 2025 (arXiv 2507.11538) 68% compliance ceiling. Six coordinated changes: fail-safe routing to E2, tier floor reductions, ceremony elimination, primacy repositioning, compliance observability, chunked E2 execution.
+- **SecurityPipeline.hook.ts** — PreToolUse inspector chain: CanaryInspector (prompt injection), PatternInspector (dangerous commands), EgressInspector (outbound data), RulesInspector (policy). ObserveGate and PhaseTransitionGuard on Write/Edit. Hooks fail closed on error.
+- **Local inference routing** — `Inference.ts` with warmth-aware routing, `inference-routing.yaml` tier manifest, `skill-routing.yaml` per-skill overrides, automatic Claude fallback. `BenchmarkLocalModels.ts` + `QualityTestModels.ts` for model evaluation.
+- **Knowledge acquisition pipeline** — `TLDRCatchup.ts` cron orchestrator, `TLDRHarvest.ts` profile-scored ingestion, `KnowledgeHarvester.ts` with agy backend, `KnowledgeGraphLib.ts` typed graph layer with wikilink traversal.
+- **Observability layer** — JSONL instrumentation across prompt classification, tool activity, failures, satisfaction signals. Tripwires at >3 fail-safe events/session or >5% weekly.
+- **Projects retrieval domain** — active project notes BM25-indexed and graph-traversable via MemoryRetriever, KnowledgeGraph, KnowledgeGraphLib.
+- **Release pipeline** — `release.ts` with SecretScan, TruffleHog, identifier gate, Grype, SBOM (CycloneDX 1.5), private zone stripping, personal identifier sanitization.

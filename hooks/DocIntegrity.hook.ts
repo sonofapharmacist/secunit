@@ -1,0 +1,55 @@
+#!/usr/bin/env bun
+/**
+ * DocIntegrity.hook.ts — Check cross-refs if system docs/hooks were modified
+ *
+ * PURPOSE:
+ * Runs deterministic + inference-powered doc integrity checks when system
+ * files (hooks, PAI docs, skills, components) were modified during the session.
+ * Self-gating: returns instantly when no system files changed.
+ *
+ * TRIGGER: Stop
+ *
+ * NEEDS TRANSCRIPT: Yes (to detect which files were modified via tool_use entries)
+ *
+ * HANDLER: handlers/DocCrossRefIntegrity.ts
+ */
+
+import { readHookInput, parseTranscriptFromInput } from './lib/hook-io';
+import { handleDocCrossRefIntegrity } from './handlers/DocCrossRefIntegrity';
+import { handleRebuildArchSummary } from './handlers/RebuildArchSummary';
+import { handleAlgorithmVersionAudit } from './handlers/AlgorithmVersionAudit';
+
+async function main() {
+  const input = await readHookInput();
+  if (!input) { process.exit(0); }
+
+  const parsed = await parseTranscriptFromInput(input);
+
+  try {
+    await handleDocCrossRefIntegrity(parsed, input);
+  } catch (err) {
+    console.error('[DocIntegrity] Cross-ref handler failed:', err);
+  }
+
+  try {
+    await handleRebuildArchSummary();
+  } catch (err) {
+    console.error('[DocIntegrity] Arch-summary handler failed:', err);
+  }
+
+  try {
+    await handleAlgorithmVersionAudit(input.transcript_path);
+  } catch (err) {
+    console.error('[DocIntegrity] Algorithm version audit failed:', err);
+  }
+
+  // Proposed semantic edits no longer block Stop (2026-09-27): they surface at
+  // session start through LoadContext's pendingReviewDigest.
+
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error('[DocIntegrity] Fatal:', err);
+  process.exit(0);
+});

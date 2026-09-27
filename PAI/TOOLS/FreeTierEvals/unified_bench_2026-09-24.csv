@@ -1,0 +1,2 @@
+model,provider,tier,t_score,r_score,c_score,total,total_max,wall_s,status,tm_score,tm_pai,tm_cost,tm_wall
+gemma4_26b_a4b,llamacpp,2,8,5,8,21,53,335.0,complete,,,0,0.0

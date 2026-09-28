@@ -78,6 +78,35 @@ output = "log"
 enabled = true
 timeout_ms = 1800000
 
+# Weekly Flash regression canary — workload bench, 6 use cases x 10 cases x 1 rep (~60 jailed
+# agy calls + ~60 Haiku judge calls). Sunday 03:00 so it stays clear of the weekday TLDR run
+# that shares the AI Pro quota (a full 5-rep run is ~300 calls, near the ~266-call ceiling).
+# Exit 1 + Pulse notify if any use case drops below USER/Evals/WorkloadBench/canary-floors.yaml.
+# ISA: MEMORY/WORK/20260923-105803_workload-bench-gemini-38-flash (ISC-12, ISC-13).
+[[job]]
+name = "workload-bench-flash-canary"
+schedule = "0 3 * * 0"
+type = "script"
+command = "bun run ../TOOLS/FreeTierEvals/workload_bench.ts --model agyflash38 --reps 1 --use-cases code-review-diff,isa-criteria-authoring,knowledge-note-synthesis,prompt-classify-mode-tier,threat-model-design,tldr-categorize --threshold-file ../USER/Evals/WorkloadBench/canary-floors.yaml"
+output = "log"
+enabled = true
+timeout_ms = 3600000
+
+# Weekly release-gate regression check. Runs the real release.ts --scan-only (never a push)
+# against a hardlink copy of ~/.claude seeded with canaries; fails if a private-zone canary
+# reaches the stage or a gate stops firing. ~150 s. --notify posts to /notify on failure,
+# because Pulse only logs failed script jobs. Saturday 05:00: clear of the 02:00 auto-commit
+# (git add -A would race the fixture), the 04:23 nightly review and the Sunday canary.
+# ISA: MEMORY/WORK/20260928-073500_release-leak-regression-harness. ADR: release-secretscan-strict-and-leak-harness.md.
+[[job]]
+name = "release-leak-test"
+schedule = "0 5 * * 6"
+type = "script"
+command = "bun run ../TOOLS/ReleaseLeakTest.ts --notify"
+output = "log"
+enabled = true
+timeout_ms = 1800000
+
 [[job]]
 name = "healthcheck"
 schedule = "*/5 * * * *"
@@ -275,13 +304,18 @@ command = "bun run checks/apple-health-ingest.ts"
 output = "log"
 enabled = false
 
+# DISABLED 2026-09-27. TLDR has exactly one scheduler: the crontab entry running TLDRCatchup.ts at
+# 09:00 weekdays (see DOCUMENTATION/TLDR/cron-config.md). This job ran the scraper at the same minute
+# and raced it; it was also SIGTERM'd by the 60s default timeout and circuit-broken since 2026-05-18.
+# A Hermes cron job (tldr-scrape, f9e882b233e2) did the same and is paused. Concurrent runs caused
+# the feed's duplicate ids and lost rows.
 [[job]]
 name = "tldr-scrape"
 schedule = "0 9 * * 1-5"
 type = "script"
 command = "bun run ~/.claude/PAI/TOOLS/TLDRScraper.ts --today"
 output = "log"
-enabled = true
+enabled = false
 
 # Weekly latency drift check — runs analyze-latency.ts --dry-run every Monday 9am.
 # Outputs proposal table to log; apply manually with --apply when drift is confirmed.

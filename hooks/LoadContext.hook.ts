@@ -438,11 +438,13 @@ async function main() {
     // Claude Code never sets CLAUDE_SESSION_ID/SESSION_ID. Read stdin first so
     // standing-instructions lookup below has a real session id to key off of.
     let stdinSessionId: string | undefined;
+    let stdinSource: string | undefined;
     try {
       const stdin = await Bun.stdin.text();
       if (stdin.trim()) {
         const parsed = JSON.parse(stdin);
         stdinSessionId = parsed?.session_id;
+        stdinSource = parsed?.source;
       }
     } catch {
       // No/invalid stdin — fall through, standing instructions will be skipped
@@ -482,7 +484,8 @@ async function main() {
         const imperativesPath = join(paiDir, 'MEMORY', 'STATE', `imperatives-${sessionId}.json`);
         if (existsSync(imperativesPath)) {
           const impState = JSON.parse(readFileSync(imperativesPath, 'utf-8'));
-          if (impState?.imperatives && impState.imperatives.length > 0) {
+          // schema v1 files hold single-word captures ("to", "now") — never inject them
+          if (impState?.schema_version === 2 && impState.imperatives?.length > 0) {
             const lines = impState.imperatives.map((imp: any) => {
               const countSuffix = imp.count > 1 ? ` (×${imp.count})` : '';
               return `- [\`${imp.kind}\`] ${imp.text}${countSuffix}`;
@@ -499,6 +502,21 @@ ${lines.join('\n')}
       }
     } catch (err) {
       console.error(`⚠️ Failed to load standing instructions: ${err}`);
+    }
+
+    // After compaction, inject the handover PreCompact.hook.ts persisted.
+    // PreCompact's own stdout never reaches the model; this is the delivery path.
+    let compactHandover = '';
+    if (stdinSource === 'compact' && stdinSessionId) {
+      try {
+        const handoverPath = join(paiDir, 'MEMORY', 'STATE', `handover-${stdinSessionId}.md`);
+        if (existsSync(handoverPath)) {
+          compactHandover = readFileSync(handoverPath, 'utf-8').trim();
+          console.error(`📦 Loaded pre-compaction handover (${compactHandover.length} chars)`);
+        }
+      } catch (err) {
+        console.error(`⚠️ Failed to load compaction handover: ${err}`);
+      }
     }
 
     // Load relationship context (lightweight summary)
@@ -543,10 +561,10 @@ ${lines.join('\n')}
     }
 
     // Inject dynamic context if we have any
-    if (relationshipContext || learningContext || standingInstructions) {
+    if (relationshipContext || learningContext || standingInstructions || compactHandover) {
       const message = `<system-reminder>
 PAI Dynamic Context (Auto-loaded at Session Start)
-${standingInstructions ? '\n' + standingInstructions + '---\n' : ''}${relationshipContext ?? ''}${learningContext ? '\n---\n' + learningContext : ''}
+${compactHandover ? '\n' + compactHandover + '\n---\n' : ''}${standingInstructions ? '\n' + standingInstructions + '---\n' : ''}${relationshipContext ?? ''}${learningContext ? '\n---\n' + learningContext : ''}
 ---
 Dynamic context loaded. Operational rules and format templates are in CLAUDE.md.
 </system-reminder>`;

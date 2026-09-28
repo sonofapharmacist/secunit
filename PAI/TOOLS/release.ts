@@ -558,9 +558,8 @@ const STRIP_TIP_PATTERNS: string[] = [
 // New secunit-specific tips — populated at sanitize time when counts are known
 function buildSecunitTips(): string[] {
   return [
-    `secunit runs Algorithm v${ALGO_VERSION_LATEST} — doctrine enforced by hooks, not prompts. 729 lines of ceremony cut to 119 of rules that hold.`,
+    `secunit runs Algorithm v${ALGO_VERSION_LATEST}: the verification doctrine is enforced by hooks, not prompts.`,
     `${stagedSkillCount} public skills across cognition, research, security, infrastructure, web, and life OS.`,
-    'To cure carpal tunnel syndrome: stand up from desk, leave the room, walk away never to be seen again.',
   ]
 }
 
@@ -722,20 +721,23 @@ export interface ScanPattern {
 
 const PERSONAL_PATTERNS: ScanPattern[] = [
   // Tailscale CGNAT block (the 100.64/10 range)
+  // agy-egress-lockdown.sh lists the reserved ranges it rejects (RFC 1918, RFC 6598
+  // CGNAT, loopback, link-local) as CIDR blocks: generic, not personal addresses.
   {
     re: /\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+\b/g,
     label: 'tailscale-ip',
+    whitelist: /PAI\/TOOLS\/agy-egress-lockdown\.sh$/,
   },
   // RFC-1918 LAN
   {
     re: /\b192\.168\.\d+\.\d+\b/g,
     label: 'lan-ip',
-    whitelist: /CommandInjection\.md$|skills\/Fabric\/Patterns\/|skills\/ISA\/Examples\//,
+    whitelist: /CommandInjection\.md$|skills\/Fabric\/Patterns\/|skills\/ISA\/Examples\/|PAI\/TOOLS\/agy-egress-lockdown\.sh$/,
   },
   {
     re: /\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
     label: 'lan-ip-10',
-    whitelist: /skills\/Fabric\/Patterns\/|skills\/ISA\/Examples\//,
+    whitelist: /skills\/Fabric\/Patterns\/|skills\/ISA\/Examples\/|PAI\/TOOLS\/agy-egress-lockdown\.sh$/,
   },
   // Personal patterns (machine names, usernames, domains, employer, name, email) are appended
   // from PAI/USER/Config/release-private.ts, so this file never carries them.
@@ -1212,7 +1214,10 @@ function runSecretScan(): boolean {
     log('  ⚠ SecretScan.ts not found — skipping (install TruffleHog to enable)')
     return true
   }
-  const r = spawnSync('bun', [SECRET_SCAN, STAGE_ROOT], { encoding: 'utf-8', stdio: 'pipe' })
+  // --strict: fail on ANY finding. Without it SecretScan exits 0 unless TruffleHog
+  // could verify the credential live, so a staged private key printed a warning and
+  // this gate logged "clean" (caught by ReleaseLeakTest.ts ISC-6, 2026-09-28).
+  const r = spawnSync('bun', [SECRET_SCAN, STAGE_ROOT, '--strict'], { encoding: 'utf-8', stdio: 'pipe' })
   if (r.stdout?.trim()) log(r.stdout)
   if (r.stderr?.trim()) log(r.stderr)
   if (r.status !== 0) {

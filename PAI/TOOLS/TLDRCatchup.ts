@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
@@ -8,9 +8,18 @@ const HOME = process.env.HOME ?? ""
 const PAI_DIR = join(HOME, ".claude", "PAI")
 const FEED_JSONL = join(PAI_DIR, "MEMORY", "STATE", "tldr-feed.jsonl")
 const FEED_TMP = `${FEED_JSONL}.tmp`
+// One catchup at a time. Until 2026-09-27 three schedulers (crontab, a Hermes cron job, a Pulse job)
+// all started the pipeline at 09:00. Scraper appends and triage/harvest full rewrites interleaved,
+// which produced 1904 duplicate ids and silently lost rows on other days.
+const LOCK_PATH = join(PAI_DIR, "MEMORY", "STATE", "tldr-catchup.lock")
 const TOOLS_DIR = join(PAI_DIR, "TOOLS")
 const SCRAPER = join(TOOLS_DIR, "TLDRScraper.ts")
 const HARVEST = join(TOOLS_DIR, "TLDRHarvest.ts")
+const RESCORE = join(TOOLS_DIR, "TLDRRescore.ts")
+// Items whose scoring failed (agy quota, timeout, violation) carry reason "parse error — defaulted"
+// and a placeholder score of 2, which triage skips. Retry a bounded batch each run, newest first,
+// so a backlog can't eat the AI Pro quota that the rest of the run needs.
+const RESCORE_LIMIT_PER_RUN = 30
 const SURFACE = join(TOOLS_DIR, "TLDRSurface.ts")
 const PULSE_URL = "http://localhost:31337/notify"
 
@@ -211,6 +220,25 @@ function countKeptUnharvested(items: FeedItem[]): number {
   return items.filter((item: FeedItem): boolean => item.kept === true && item.harvested !== true).length
 }
 
+/** Re-score defaulted items before triage; TLDRRescore resets `evaluated` on success so triage picks them up. */
+function runRescore(dryRun: boolean): void {
+  const defaulted = loadFeed().filter((item: FeedItem): boolean => item.reason === "parse error — defaulted").length
+  if (defaulted === 0) {
+    console.log("[rescore] no defaulted scores")
+    return
+  }
+  const result = spawnSync("bun", [RESCORE, "--limit", String(RESCORE_LIMIT_PER_RUN), ...(dryRun ? ["--dry-run"] : [])], {
+    stdio: "pipe",
+    encoding: "utf-8",
+  })
+  if (result.status !== 0) {
+    console.error(`[rescore] failed: ${result.stderr?.slice(0, 300) ?? ""}`)
+    return
+  }
+  const summary = result.stdout.split("\n").filter((l: string): boolean => /\[rescore\] (\d+ items to rescore|nothing to do|done|\d+ failures in a row)/.test(l))
+  console.log(summary.join("\n"))
+}
+
 function runScraper(missingDays: string[], dryRun: boolean): number {
   let scrapedCount = 0
 
@@ -363,6 +391,39 @@ function printSummary(date: string, dryRun: boolean, scrapedCount: number, triag
   console.log(lines.join("\n"))
 }
 
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM" }
+}
+
+/** Returns false if another live catchup holds the lock. A lock left by a dead process is taken over. */
+function acquireLock(): boolean {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = openSync(LOCK_PATH, "wx")
+      writeFileSync(fd, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }))
+      closeSync(fd)
+      return true
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
+      let holder = 0
+      try { holder = Number(JSON.parse(readFileSync(LOCK_PATH, "utf8")).pid) } catch { /* unreadable: treat as stale */ }
+      if (holder > 0 && pidAlive(holder)) {
+        console.log(`[catchup] another TLDRCatchup is running (pid ${holder}); exiting without changes`)
+        return false
+      }
+      console.log(`[catchup] removing stale lock${holder > 0 ? ` from dead pid ${holder}` : ""}`)
+      try { unlinkSync(LOCK_PATH) } catch { /* raced with another remover */ }
+    }
+  }
+  return false
+}
+
+function releaseLock(): void {
+  try {
+    if (Number(JSON.parse(readFileSync(LOCK_PATH, "utf8")).pid) === process.pid) unlinkSync(LOCK_PATH)
+  } catch { /* already gone */ }
+}
+
 async function main(): Promise<void> {
   if (HOME.length === 0) {
     throw new Error("$HOME is not set")
@@ -374,7 +435,14 @@ async function main(): Promise<void> {
     return
   }
 
+  if (!acquireLock()) return
+  process.on("exit", releaseLock)
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    process.on(sig, () => { releaseLock(); process.exit(sig === "SIGTERM" ? 143 : 130) })
+  }
+
   const today = todayInChicago()
+  runRescore(args.dryRun)
   const initialFeed = loadFeed()
   const initialDateInfo = getFeedDateInfo(initialFeed)
 

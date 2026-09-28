@@ -172,18 +172,35 @@ export function hasCheckableClaim(line: string): boolean {
 }
 
 /**
- * IDs marked [x] with no evidence under ## Verification. A line counts as
- * evidence for an ID when it names the ID and contains a checkable claim
- * (see hasCheckableClaim). A bare "36/36 passed" summary is not evidence.
+ * IDs marked [x] with no evidence. A line counts as evidence for an ID when it
+ * names the ID and contains a checkable claim (see hasCheckableClaim). A bare
+ * "36/36 passed" summary is not evidence.
+ *
+ * Evidence is read from two places: the `## Verification` section (the durable,
+ * conventional home) and the `- [x] ISC-N:` criterion line itself. The criterion
+ * line only counts when it carries its OWN checkable claim — a backticked probe
+ * or quoted output — so the quoted-evidence bar is unchanged; this just credits
+ * the inline form that ISAs used before `## Verification` was conventional,
+ * instead of forcing a duplicate line. Prose criteria still need a Verification
+ * entry. See PAI/DOCUMENTATION/Decisions/phase-guard-inline-criterion-evidence.md.
  */
 export function unevidencedPassed(content: string): string[] {
-  const passed = [...content.matchAll(PASSED_RE)].map((m) => m[1]);
-  const verification = section(content, 'Verification') ?? '';
   const evidenced = new Set<string>();
-  for (const line of verification.split('\n')) {
-    const ids = idsInLine(line);
-    if (ids.length === 0 || !hasCheckableClaim(line)) continue;
-    ids.forEach((id) => evidenced.add(id));
+  const credit = (text: string) => {
+    for (const line of text.split('\n')) {
+      const ids = idsInLine(line);
+      if (ids.length === 0 || !hasCheckableClaim(line)) continue;
+      ids.forEach((id) => evidenced.add(id));
+    }
+  };
+  credit(section(content, 'Verification') ?? '');
+
+  // Passed criterion lines, credited only when the line itself is checkable.
+  const passed: string[] = [];
+  for (const m of content.matchAll(CRITERION_RE)) {
+    if (!/^\s*- \[[xX]\] /.test(m[0])) continue;
+    passed.push(m[1]);
+    credit(m[0]);
   }
   return passed.filter((id) => !evidenced.has(id));
 }

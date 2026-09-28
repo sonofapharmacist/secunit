@@ -150,8 +150,8 @@ function main(): void {
     const missing = unevidencedPassed(proposed);
     if (missing.length > 0) {
       block(
-        `[PhaseTransitionGuard] 🚫 Cannot mark complete: no evidence under ## Verification for ${missing.join(", ")}.\n` +
-          "  Add `ISC-N: [probe type] — [quoted output]` lines, or uncheck the criteria. See PAI/ALGORITHM/v8.0.0.md → Verification."
+        `[PhaseTransitionGuard] 🚫 Cannot mark complete: no quoted evidence for ${missing.join(", ")}.\n` +
+          "  Add an `ISC-N: [probe] — [quoted output]` line under ## Verification, or put a backticked/quoted claim on the criterion line itself, or uncheck the criteria. See PAI/ALGORITHM/v8.0.0.md → Verification."
       );
     }
     // v8.1+: an ISA can't close with a forgotten branch. Only fires when a ## Branches section exists.

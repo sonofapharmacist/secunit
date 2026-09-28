@@ -9,7 +9,10 @@
  *   - Config and settings are rewritten every call: empty permission allow-list, no trusted workspaces, no MCP servers.
  *   - Environment cleared (--clearenv): no API keys leak in via env.
  *   - Fresh empty /work per call, deleted afterwards. The jail's scratch/ is wiped after each call.
- *   - Network is shared (agy must reach Google). LAN/Tailscale egress is NOT blocked yet — see ISA next steps.
+ *   - Network is shared (agy must reach Google). In uid mode (after `sudo bash PAI/TOOLS/agy-egress-lockdown.sh`), the jail runs as
+ *     uid `agy` and nftables rejects its traffic to loopback (except DNS), RFC1918, Tailscale, and all IPv6.
+ *     Before that script runs, LAN/Tailscale/localhost egress is open.
+ *   - Tool-attempt transcripts are archived to <jail root>/violations/ (outlives agy's own brain rotation).
  *
  * Tripwire: the transcript is parsed after every call. Any tool call (planner tool_calls or a GENERIC step)
  * marks the call a violation. Headless agy auto-denies tools but still exits 0, so exit code alone lies.
@@ -19,13 +22,27 @@
  *   echo "prompt" | bun AgyJail.ts [--json]
  * Exit: 0 clean · 4 tool-use violation · 2 harness error (no answer, timeout, missing transcript)
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, chmodSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, chmodSync, statSync, utimesSync, renameSync } from "fs";
+import { join, dirname, basename } from "path";
 
 const HOME = process.env.HOME!;
-const AGY_BIN = process.env.AGY_BIN ?? join(HOME, ".local/bin/agy");
+// uid mode: once PAI/TOOLS/agy-egress-lockdown.sh has run as root, the jail
+// runs as system user `agy` via `sudo -n -u agy <WRAPPER>`, and nftables rejects that uid's
+// traffic to loopback/LAN/Tailscale. The wrapper's presence switches the mode on; after that
+// there is no fallback: if sudo fails, bwrap never runs and the call fails closed.
+const UID_WRAPPER = "/usr/local/lib/agy-jail/run";
+const UID_MODE = existsSync(UID_WRAPPER);
+const AGY_SRC = process.env.AGY_BIN ?? join(HOME, ".local/bin/agy");
+// uid `agy` cannot traverse $HOME, so it runs a copy that syncAgyBinary() keeps current.
+const AGY_BIN = UID_MODE ? "/opt/agy/agy" : AGY_SRC;
 const REAL_STATE = join(HOME, ".gemini/antigravity-cli");
-const JAIL_ROOT = join(process.env.XDG_DATA_HOME ?? join(HOME, ".local/share"), "agy-jail");
+// uid mode: /var/lib/agy-jail is 2770 (owner = you, group agyjail = {agy}); that gate is what
+// makes the looser file modes below safe.
+const JAIL_ROOT = UID_MODE ? "/var/lib/agy-jail" : join(process.env.XDG_DATA_HOME ?? join(HOME, ".local/share"), "agy-jail");
+const FILE_MODE = UID_MODE ? 0o644 : 0o600;
+// Tool-attempt transcripts are copied here: agy rotates its own brain at ~500 sessions (about
+// a day at current volume), and this dir is never mounted inside the jail.
+const VIOLATIONS_DIR = join(JAIL_ROOT, "violations");
 const JAIL_STATE = join(JAIL_ROOT, "state");
 const JAIL_CONFIG = join(JAIL_ROOT, "config");
 const JAIL_WORK = join(JAIL_ROOT, "work");
@@ -68,23 +85,64 @@ export function parseTranscript(raw: string): TranscriptStep[] {
   return raw.split("\n").filter(Boolean).map((l) => JSON.parse(l));
 }
 
+/**
+ * Write a jail config file. In uid mode agy rewrites some of these itself with its own modes
+ * (settings.json comes back 0600, owned by agy), so unlink first: the containing dir is ours,
+ * and unlinking needs write on the dir, not on the file.
+ */
+function writeJailFile(path: string, data: string) {
+  if (UID_MODE) rmSync(path, { force: true });
+  writeFileSync(path, data, { mode: FILE_MODE });
+}
+
+/**
+ * Delete a path the jailed process may have filled. In uid mode agy creates 2755 dirs that we
+ * cannot empty, so the delete runs as agy through the same sudo wrapper, in a minimal bwrap that
+ * sees only the target's parent dir.
+ */
+function removeJailPath(path: string) {
+  if (!UID_MODE) { rmSync(path, { recursive: true, force: true }); return; }
+  if (!existsSync(path)) return;
+  const r = Bun.spawnSync([
+    "sudo", "-n", "-u", "agy", UID_WRAPPER,
+    "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--symlink", "usr/bin", "/bin",
+    "--bind", dirname(path), "/t", "--unshare-all", "--die-with-parent",
+    "rm", "-rf", `/t/${basename(path)}`,
+  ], { stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) console.error(`[AgyJail] agy-side rm of ${path} exited ${r.exitCode}: ${r.stderr.toString().trim()}`);
+  // Anything left is ours; this throws EACCES if not, rather than leaving jail debris silently.
+  rmSync(path, { recursive: true, force: true });
+}
+
+/** uid mode: re-copy the agy binary after `agy update` replaces the one in $HOME. */
+function syncAgyBinary() {
+  if (!UID_MODE) return;
+  const src = statSync(AGY_SRC);
+  const dst = existsSync(AGY_BIN) ? statSync(AGY_BIN) : null;
+  if (dst && dst.size === src.size && dst.mtimeMs === src.mtimeMs) return;
+  const tmp = `${AGY_BIN}.tmp-${process.pid}`;
+  copyFileSync(AGY_SRC, tmp); chmodSync(tmp, 0o755); utimesSync(tmp, src.atime, src.mtime);
+  renameSync(tmp, AGY_BIN);
+}
+
 function prepareJail() {
-  for (const d of [JAIL_STATE, JAIL_CONFIG, join(JAIL_CONFIG, "projects"), JAIL_WORK]) mkdirSync(d, { recursive: true, mode: 0o700 });
+  syncAgyBinary();
+  for (const d of [JAIL_STATE, JAIL_CONFIG, join(JAIL_CONFIG, "projects"), JAIL_WORK, VIOLATIONS_DIR]) mkdirSync(d, { recursive: true, mode: UID_MODE ? 0o777 : 0o700 });
   const token = join(JAIL_STATE, "antigravity-oauth-token");
   if (!existsSync(token)) {
     const real = join(REAL_STATE, "antigravity-oauth-token");
     if (!existsSync(real)) throw new Error(`no agy login found at ${real} — run 'agy' once to sign in`);
-    copyFileSync(real, token); chmodSync(token, 0o600);
+    copyFileSync(real, token); chmodSync(token, FILE_MODE);
   }
   // Rewritten every call so anything agy did to its own permissions last time is undone.
   const locked = { permissions: { allow: [] }, trustedWorkspaces: [] };
   // Carry only the model choice over from GP's real agy settings; everything else stays locked.
   let model: string | undefined;
   try { model = JSON.parse(readFileSync(join(REAL_STATE, "settings.json"), "utf8")).model; } catch {}
-  writeFileSync(join(JAIL_STATE, "settings.json"), JSON.stringify({ ...locked, ...(model ? { model } : {}) }), { mode: 0o600 });
-  writeFileSync(join(JAIL_CONFIG, "config.json"), JSON.stringify(locked), { mode: 0o600 });
-  writeFileSync(join(JAIL_CONFIG, "mcp_config.json"), "{}", { mode: 0o600 });
-  rmSync(join(JAIL_STATE, "scratch"), { recursive: true, force: true });
+  writeJailFile(join(JAIL_STATE, "settings.json"), JSON.stringify({ ...locked, ...(model ? { model } : {}) }));
+  writeJailFile(join(JAIL_CONFIG, "config.json"), JSON.stringify(locked));
+  writeJailFile(join(JAIL_CONFIG, "mcp_config.json"), "{}");
+  removeJailPath(join(JAIL_STATE, "scratch"));
 }
 
 function bwrapArgs(work: string): string[] {
@@ -116,9 +174,10 @@ export async function runJailed(prompt: string, opts: { model?: string; timeoutS
   if (inflight === 0) prepareJail();
   inflight++;
   const work = mkdtempSync(join(JAIL_WORK, "w-"));
+  if (UID_MODE) chmodSync(work, 0o777); // uid agy must write /work; the 2770 jail root gates access
   try {
     const proc = Bun.spawn([
-      "bwrap", ...bwrapArgs(work),
+      ...(UID_MODE ? ["sudo", "-n", "-u", "agy", UID_WRAPPER] : ["bwrap"]), ...bwrapArgs(work),
       "timeout", "-k", "10", String(timeoutSec + 15), AGY_BIN, "-p", prompt,
       ...(opts.model ? ["--model", opts.model] : []), "--disable-slash-commands", "--output-format", "json", "--print-timeout", `${timeoutSec}s`,
     ], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -142,13 +201,17 @@ export async function runJailed(prompt: string, opts: { model?: string; timeoutS
     const text = typeof out.response === "string" && out.response.trim() ? out.response.trim() : finalText(steps);
     if (TRUNCATION_MARK.test(text)) return fail("agy answer contains a transcript truncation marker", { session, in_tokens, out_tokens });
     const violation = tool_calls.length > 0 || readdirSync(work).length > 0;
+    if (violation) {
+      try { copyFileSync(tpath, join(VIOLATIONS_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}_${session}.jsonl`)); }
+      catch (e) { console.error(`[AgyJail] could not archive violation transcript ${session}: ${e}`); }
+    }
     const res: JailResult = { ok: !violation && text.length > 0, violation, text, model, session, tool_calls, steps: steps.length, in_tokens, out_tokens, duration_ms: Date.now() - t0 };
     const sysErr = systemErrors(steps).pop();
     if (!text && !violation) res.error = sysErr ? `agy: ${sysErr}` : `no answer; status=${out.status} exit=${exit}`;
     return res;
   } finally {
-    rmSync(work, { recursive: true, force: true });
-    if (--inflight === 0) rmSync(join(JAIL_STATE, "scratch"), { recursive: true, force: true });
+    removeJailPath(work);
+    if (--inflight === 0) removeJailPath(join(JAIL_STATE, "scratch"));
   }
 }
 

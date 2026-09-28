@@ -1,32 +1,35 @@
 #!/usr/bin/env bun
 /**
- * ImperativeExtractor.hook.ts — Extract imperative instructions from assistant turns
+ * ImperativeExtractor.hook.ts — Extract imperative instructions from user prompts
  *
  * PURPOSE:
- * Incrementally builds a per-session list of "do X" instructions issued during
- * the session. The list survives compaction so the model can be reminded of
- * imperatives it might have lost when context was compressed.
+ * Incrementally builds a per-session list of "do X" instructions the user
+ * issued during the session. The list survives compaction so the model can be
+ * reminded of imperatives it might have lost when context was compressed.
  *
- * TRIGGER: PostToolUse
+ * TRIGGER: UserPromptSubmit (was PostToolUse over assistant turns until
+ * 2026-09-27 — that scanned the model's own narration and captured one word)
  *
  * INPUT (stdin JSON):
- *   { session_id, transcript_path, tool_name, tool_input, tool_response, ... }
+ *   { session_id, prompt, ... }
  *
  * OUTPUT:
  *   - File: ${PAI_DIR}/MEMORY/STATE/imperatives-${sessionId}.json
+ *   - stdout: nothing (UserPromptSubmit stdout would be injected as context)
  *   - stderr: status messages
  *   - exit(0): always (non-blocking)
  *
- * PATTERNS (regex with word boundaries to avoid over-matching natural prose):
- *   write   → "write to X" (file/path target)
+ * PATTERNS (sentence-level triggers; the whole sentence is stored):
+ *   write   → "write to X"
  *   update  → "update X" or "update the X"
  *   format  → "follow/use Algorithm|NATIVE|MINIMAL format|mode"
  *   voice   → "include 🗣️ Munro:"
  *   verify  → "check/verify X before Y"
+ *   rule    → sentence opening with always/never/don't/do not/stop
  *
  * PERFORMANCE:
  *   - Non-blocking: Yes
- *   - Typical execution: <50ms (regex over latest assistant turn only)
+ *   - Typical execution: <50ms (regex over one prompt)
  *   - Atomic write: tmp + rename (no partial state on crash)
  *
  * REFINED FROM FORGE DRAFT (2026-06-17):
@@ -42,10 +45,10 @@ import { join } from 'path';
 
 const PAI_DIR = process.env.PAI_DIR || join(process.env.HOME || '', '.claude', 'PAI');
 const STATE_DIR = join(PAI_DIR, 'MEMORY', 'STATE');
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2; // v2 = sentence-level text; v1 files held single-word captures
 const MAX_IMPERATIVES = 50;
 
-type ImperativeKind = 'write' | 'update' | 'format' | 'voice' | 'verify';
+type ImperativeKind = 'write' | 'update' | 'format' | 'voice' | 'verify' | 'rule';
 
 interface Imperative {
   kind: ImperativeKind;
@@ -68,91 +71,72 @@ interface Pattern {
   regex: RegExp;
 }
 
+// Each pattern is a sentence-level trigger. The stored text is the whole
+// sentence it fires in — a single captured word ("update to" → "to") carried
+// no meaning, which is what the pre-2026-09-27 capture-group design produced.
 const PATTERNS: Pattern[] = [
-  { kind: 'write',  regex: /\bwrite\s+to\s+([A-Z][\w./-]+)/gi },
-  { kind: 'update', regex: /\bupdate\s+(?:the\s+)?([A-Z][\w./-]+)/gi },
-  // Format pattern allows optional tier specifier between mode name and format keyword
-  // (e.g., "Algorithm E3 format", "Algorithm format", "NATIVE mode").
-  { kind: 'format', regex: /\b(?:follow|use)\s+(?:the\s+)?(Algorithm|NATIVE|MINIMAL|ALGORITHM)\b[\w\s]*?(?:format|mode)/gi },
-  { kind: 'voice',  regex: /\binclude\s+(?:the\s+)?🗣️\s+Munro:/giu },
-  { kind: 'verify', regex: /\b(?:check|verify)\s+([\w\s]+?)\s+before\s+([\w\s]+)/gi },
+  { kind: 'write',  regex: /\bwrite\s+(?:it\s+|this\s+|that\s+)?to\s+\S/i },
+  { kind: 'update', regex: /\bupdate\s+(?:the\s+)?\S/i },
+  // Optional tier specifier between mode name and format keyword ("Algorithm E3 format").
+  { kind: 'format', regex: /\b(?:follow|use)\s+(?:the\s+)?(?:Algorithm|NATIVE|MINIMAL)\b[\w\s]*?\b(?:format|mode)\b/i },
+  { kind: 'voice',  regex: /\binclude\s+(?:the\s+)?🗣️\s*Munro:/iu },
+  { kind: 'verify', regex: /\b(?:check|verify)\s+.+?\s+before\s+\S/i },
+  // Standing rules must open the sentence — "I don't know why" is not a rule.
+  { kind: 'rule',   regex: /^(?:please\s+|and\s+|also\s+)?(?:always|never|don'?t|do\s+not|stop)\b\s+\S/i },
 ];
+
+const MAX_SENTENCE_CHARS = 240;
 
 interface HookInput {
   session_id?: string;
-  transcript_path?: string;
+  prompt?: string;
   [key: string]: unknown;
 }
 
 /**
- * Read the latest assistant turn text from a Claude Code transcript.jsonl.
- * Content is an array of content blocks; we extract only type==='text' blocks.
+ * Split a user prompt into candidate sentences. Skips fenced code, XML-ish
+ * tag lines (pasted content, command expansions), and quoted lines — those
+ * aren't the user speaking.
  */
-function getLatestAssistantTurn(transcriptPath: string): string | null {
-  if (!existsSync(transcriptPath)) return null;
-  try {
-    const content = readFileSync(transcriptPath, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-    // Walk backwards — most recent assistant message
-    for (let i = lines.length - 1; i >= 0; i--) {
-      let entry: any;
-      try {
-        entry = JSON.parse(lines[i]);
-      } catch {
-        continue;
-      }
-      // Anthropic transcript shape: { type: "assistant", message: { content: [...] } }
-      // OR legacy: { role: "assistant", content: ... }
-      const isAssistant =
-        entry?.type === 'assistant' ||
-        entry?.role === 'assistant' ||
-        entry?.message?.role === 'assistant';
-      if (!isAssistant) continue;
-
-      const content = entry?.message?.content ?? entry?.content;
-      if (typeof content === 'string') return content;
-      if (Array.isArray(content)) {
-        const textBlocks = content
-          .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
-          .map((b: any) => b.text);
-        if (textBlocks.length > 0) return textBlocks.join('\n');
-      }
-      return null;
+function splitSentences(prompt: string): string[] {
+  const withoutFences = prompt.replace(/```[\s\S]*?```/g, '\n');
+  const sentences: string[] = [];
+  for (const rawLine of withoutFences.split('\n')) {
+    const line = rawLine.trim().replace(/^[-*]\s+/, '');
+    if (!line || line.startsWith('<') || line.startsWith('>')) continue;
+    for (const s of line.split(/(?<=[.!?;])\s+/)) {
+      const t = s.trim();
+      if (t) sentences.push(t);
     }
-    return null;
-  } catch (err) {
-    console.error(`[ImperativeExtractor] Transcript read error: ${err}`);
-    return null;
   }
+  return sentences;
 }
 
 /**
- * Extract imperative matches from a text string. Returns deduplicated list
- * with per-imperative count for this turn.
+ * Extract imperative sentences from one user prompt. Returns deduplicated
+ * list with per-imperative count for this prompt.
  */
-function extractImperativesFromTurn(text: string): Imperative[] {
+function extractImperativesFromPrompt(prompt: string): Imperative[] {
   const now = new Date().toISOString();
   const found: Imperative[] = [];
 
-  for (const { kind, regex } of PATTERNS) {
-    // Reset regex state for global flag
-    regex.lastIndex = 0;
-    const matches = [...text.matchAll(regex)];
-    for (const match of matches) {
-      // Use capture group if present, else full match (for patterns without capture)
-      const extracted = (match[1] ?? match[0]).trim();
-      const existing = found.find(i => i.kind === kind && i.text === extracted);
-      if (existing) {
-        existing.count++;
-      } else {
-        found.push({
-          kind,
-          text: extracted,
-          count: 1,
-          first_seen: now,
-          last_seen: now,
-        });
-      }
+  for (const sentence of splitSentences(prompt)) {
+    const kind = PATTERNS.find(p => p.regex.test(sentence))?.kind;
+    if (!kind) continue;
+    const extracted = sentence.length > MAX_SENTENCE_CHARS
+      ? sentence.slice(0, MAX_SENTENCE_CHARS - 1) + '…'
+      : sentence;
+    const existing = found.find(i => i.kind === kind && i.text === extracted);
+    if (existing) {
+      existing.count++;
+    } else {
+      found.push({
+        kind,
+        text: extracted,
+        count: 1,
+        first_seen: now,
+        last_seen: now,
+      });
     }
   }
 
@@ -199,18 +183,13 @@ async function main() {
   }
 
   const sessionId = input.session_id;
-  const transcriptPath = input.transcript_path;
+  const prompt = typeof input.prompt === 'string' ? input.prompt : '';
 
-  if (!sessionId || !transcriptPath) {
+  if (!sessionId || !prompt.trim()) {
     process.exit(0);
   }
 
-  const assistantText = getLatestAssistantTurn(transcriptPath);
-  if (!assistantText) {
-    process.exit(0);
-  }
-
-  const newImperatives = extractImperativesFromTurn(assistantText);
+  const newImperatives = extractImperativesFromPrompt(prompt);
   if (newImperatives.length === 0) {
     process.exit(0);
   }

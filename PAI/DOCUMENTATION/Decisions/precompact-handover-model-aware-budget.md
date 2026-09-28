@@ -54,6 +54,16 @@ Bound the handover output to a model-aware character budget, scaled inversely wi
 - Con: the ISA summary in the handover is now truncated for M3 sessions; rely on the model to Read the file on-demand instead. Acceptable — the ISA path is stable and the model has direct file access.
 - Con: a third copy of `resolveContextWindow` will eventually drift. Mitigation: when extracting to `lib/`, do it in one PR not three.
 
+## Update 2026-09-27 — the handover had never reached the model
+
+The budget above was tuning output that went nowhere. Claude Code injects hook stdout into context only for SessionStart and UserPromptSubmit, so PreCompact stdout never reached the model. Two other faults sat underneath that one. Active Work read `STATE/current-work*.json`, which nothing writes, so it was always empty. ImperativeExtractor stored single captured words ("to", "now") taken from the assistant's own narration. The fix:
+
+- **Delivery.** PreCompact writes `STATE/handover-{sessionId}.md`. LoadContext injects it when SessionStart arrives with `source: "compact"`, and SessionCleanup deletes it at SessionEnd.
+- **Active Work source.** PreCompact now reads the `work.json` registry by `sessionUUID` and skips terminal phases. ISASync stamps the editing session's UUID onto any ISA it closes, so without that filter a cleanup session "owns" every ISA it closed. The handover also lists open criteria.
+- **Imperatives.** ImperativeExtractor moved from PostToolUse to UserPromptSubmit and reads `prompt` directly. It now stores whole sentences and adds a `rule` kind for always/never/don't/stop at the start of a sentence. The schema went to v2, and LoadContext refuses to inject v1 files. PreCompact no longer repeats the imperatives, because LoadContext already carries them.
+
+Evidence: `PAI/MEMORY/WORK/20260808-fix-precompact-handover-gaps/test-handover.ts` passes 25/25 by running the real hooks on real stdin shapes against an isolated `PAI_DIR`.
+
 ## Alternatives rejected
 
 - **Lower the trigger threshold further (e.g. 256K cap).** Doesn't fix the symptom — same handover bloat, smaller window.

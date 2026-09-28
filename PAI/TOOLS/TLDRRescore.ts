@@ -49,15 +49,22 @@ const DEFAULT_SCORE: ScoreResult = {
 
 const ALLOWED_TYPES = new Set(["tool", "research", "news", "vulnerability", "analysis", "other"])
 
-function parseArgs(argv: string[]): { dryRun: boolean; dates: string[]; showHelp: boolean } {
+function parseArgs(argv: string[]): { dryRun: boolean; dates: string[]; showHelp: boolean; limit: number | null } {
   let dryRun = false
   let showHelp = false
+  let limit: number | null = null
   const dates: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i]
     if (tok === "--help" || tok === "-h") { showHelp = true; continue }
     if (tok === "--dry-run") { dryRun = true; continue }
+    if (tok === "--limit") {
+      const v = Number(argv[++i])
+      if (!Number.isInteger(v) || v < 1) { console.error("--limit requires a positive integer"); process.exit(2) }
+      limit = v
+      continue
+    }
     if (tok === "--date") {
       const v = argv[++i]
       if (!v) { console.error("--date requires a value"); process.exit(2) }
@@ -68,7 +75,7 @@ function parseArgs(argv: string[]): { dryRun: boolean; dates: string[]; showHelp
     process.exit(2)
   }
 
-  return { dryRun, dates, showHelp }
+  return { dryRun, dates, showHelp, limit }
 }
 
 function printHelp(): void {
@@ -76,10 +83,11 @@ function printHelp(): void {
     "TLDRRescore — re-score feed items that got 'parse error — defaulted'.",
     "",
     "Usage:",
-    "  bun TLDRRescore.ts [--date YYYY-MM-DD] [--dry-run]",
+    "  bun TLDRRescore.ts [--date YYYY-MM-DD] [--limit N] [--dry-run]",
     "",
     "Flags:",
     "  --date YYYY-MM-DD   Restrict to items from this date (repeat for multiple dates)",
+    "  --limit N           Rescore at most N items, newest first (TLDRCatchup uses this to cap agy quota use)",
     "  --dry-run           Show what would be rescored without writing",
     "  --help, -h          Show this help",
     "",
@@ -168,12 +176,21 @@ async function main(): Promise<void> {
   const dateFilter = args.dates.length > 0 ? new Set(args.dates) : null
 
   const items = loadFeed()
-  const toRescore = items.filter(item =>
-    item.reason === "parse error — defaulted" &&
-    (dateFilter === null || dateFilter.has(item.date))
-  )
+  // The feed can hold the same id more than once (a known duplication bug), and a defaulted copy
+  // may sit beside a copy that was scored fine. Only rescore ids with no successful score, and
+  // keep each candidate's array index so the write-back hits that exact row, not the first id match.
+  const scoredIds = new Set(items.filter(i => i.reason !== "parse error — defaulted").map(i => i.id))
+  const candidates = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) =>
+      item.reason === "parse error — defaulted" &&
+      !scoredIds.has(item.id) &&
+      (dateFilter === null || dateFilter.has(item.date))
+    )
+    .sort((a, b) => b.item.date.localeCompare(a.item.date))
+  const toRescore = args.limit === null ? candidates : candidates.slice(0, args.limit)
 
-  console.log(`[rescore] ${toRescore.length} items to rescore${dateFilter ? ` (dates: ${[...dateFilter].join(", ")})` : ""}`)
+  console.log(`[rescore] ${toRescore.length} items to rescore${candidates.length > toRescore.length ? ` (of ${candidates.length} defaulted; --limit ${args.limit})` : ""}${dateFilter ? ` (dates: ${[...dateFilter].join(", ")})` : ""}`)
 
   if (toRescore.length === 0) {
     console.log("[rescore] nothing to do")
@@ -181,7 +198,7 @@ async function main(): Promise<void> {
   }
 
   if (args.dryRun) {
-    for (const item of toRescore) {
+    for (const { item } of toRescore) {
       console.log(`[dry-run] would rescore: ${item.date} ${item.id} — ${item.title.slice(0, 60)}`)
     }
     return
@@ -192,20 +209,28 @@ async function main(): Promise<void> {
 
   const updatedItems = [...items]
 
-  for (const item of toRescore) {
+  // Consecutive failures mean the backend is down (e.g. AI Pro quota exhausted), not that these
+  // articles are unscoreable — stop spending timeouts and leave the rest for the next run.
+  const MAX_CONSECUTIVE_FAILURES = 3
+  let consecutiveFailures = 0
+
+  for (const { item, index: idx } of toRescore) {
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      console.log(`[rescore] ${MAX_CONSECUTIVE_FAILURES} failures in a row — backend looks down; stopping, remaining items stay defaulted for the next run`)
+      break
+    }
     process.stdout.write(`[rescore] ${item.date} ${item.id} "${item.title.slice(0, 50)}"... `)
     const score = await scoreArticle(item.title, item.summary)
 
-    const idx = updatedItems.findIndex(i => i.id === item.id)
-    if (idx === -1) continue
-
     if (score.reason === "parse error — defaulted") {
       stillDefaulted++
+      consecutiveFailures++
       console.log(`still failed (score=${score.relevance_score})`)
-    } else {
-      rescored++
-      console.log(`${score.relevance_score}/5 — ${score.reason}`)
+      continue // unchanged item keeps its marker and evaluated state; nothing to write back
     }
+    consecutiveFailures = 0
+    rescored++
+    console.log(`${score.relevance_score}/5 — ${score.reason}`)
 
     // Reset evaluated so TLDRCatchup will re-triage with the new score
     updatedItems[idx] = {

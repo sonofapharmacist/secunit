@@ -73,6 +73,26 @@ if (result.success) {
 
 ---
 
+## AgyJail.ts - Jailed Antigravity (Gemini) Calls
+
+**Location:** `~/.claude/PAI/TOOLS/AgyJail.ts`
+
+Runs one Antigravity (`agy`) print-mode turn in a bubblewrap jail, text in and text out. `Inference.ts --backend antigravity`, the TLDR pipeline, and GeminiResearcher all go through it. What the jail enforces:
+- The jail can't see `$HOME`, and its environment is cleared.
+- Its permissions are rewritten on every call.
+- Any tool attempt fails the call (exit 4), and the attempt's transcript is archived under `<jail root>/violations/`.
+
+**Close the network gap (one-time, needs root):**
+```bash
+sudo bash ~/.claude/PAI/TOOLS/agy-egress-lockdown.sh           # install (idempotent)
+sudo bash ~/.claude/PAI/TOOLS/agy-egress-lockdown.sh --remove  # undo
+```
+By default the jail runs as you, and it can reach localhost, your LAN, and Tailscale. The script creates a system user `agy`, a jail root at `/var/lib/agy-jail`, and a narrow sudoers rule, plus an nftables table that rejects that uid's traffic to loopback, private, and Tailscale ranges and blocks all its IPv6. DNS to your configured resolvers is still allowed.
+
+After that, AgyJail.ts switches to running every call as `agy` on its own. From then on it fails closed: if the sudo step fails, the call fails and never runs unjailed. Re-run the script if your DNS resolvers change.
+
+---
+
 ## RemoveBg.ts - Remove Image Backgrounds
 
 **Location:** `~/.claude/PAI/TOOLS/RemoveBg.ts`
@@ -412,6 +432,27 @@ brew install trufflehog
 - Uses entropy detection + regex patterns
 - Verifies findings when possible (calls APIs to check if keys are valid)
 - No API key required (standalone CLI tool)
+
+**PAI wrapper:** `bun PAI/TOOLS/SecretScan.ts <dir> [--strict]`. By default it exits 1 only on a *verified* secret. `--strict` exits 1 on any finding, verified or not; the release gate uses it, because an unverifiable credential (a private key, a token for a host TruffleHog can't reach) is still a leak.
+
+---
+
+## ReleaseLeakTest.ts - Prove the Release Gates Strip and Block
+
+**Location:** `PAI/TOOLS/ReleaseLeakTest.ts`
+
+Runs the real `release.ts --scan-only` (never a push) against a disposable hardlink copy of `~/.claude` seeded with canaries, then checks that every private-zone canary is absent from the staged output, that each deterministic gate (identifier, SecretScan, private-zone) fires on its planted leak, and that nothing wrote through into the real tree.
+
+**Usage:**
+```bash
+bun PAI/TOOLS/ReleaseLeakTest.ts                      # full check, ~150 s; exit 0 = all pass
+bun PAI/TOOLS/ReleaseLeakTest.ts --mutate-keep-memory # self-test: MEMORY strip disabled, must exit 1
+bun PAI/TOOLS/ReleaseLeakTest.ts --keep               # keep fixture + stage + release output
+```
+
+**When to Use:** after any change to `release.ts`, `SecretScan.ts`, `release-private.ts`, or the private-zone layout, and before a release. Exit 2 means release.ts died before its gates (usually the SBOM step), not a pass.
+
+**Notes:** don't edit `PAI/`, `skills/` or `hooks/` while it runs; a write there lands on a shared inode and shows as a false write-through. Documented live writers (daemons, the DocIntegrity Stop hook, Claude Code skill sync) are excluded. Its "not planted by this harness" notes are real findings: the live tree would fail release on them today.
 
 ---
 

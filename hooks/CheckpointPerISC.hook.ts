@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
 /**
- * CheckpointPerISC.hook.ts — auto git commit on every ISC `[ ]`->`[x]` transition
+ * CheckpointPerISC.hook.ts — whole-tree git snapshot on every ISC `[ ]`->`[x]` transition
  *
  * TRIGGER: PostToolUse (Write, Edit) on ISA.md (or legacy PRD.md) under
  * MEMORY/WORK/<slug>/.
  *
  * For each newly-checked ISC, iterates through the allowlist of opted-in repos
- * (~/.claude/checkpoint-repos.txt per spec) and creates one git commit per
- * repo that has uncommitted changes. Commit subject:
+ * (~/.claude/checkpoint-repos.txt per spec) and records one snapshot commit
+ * per repo at refs/checkpoints/<slug>/<isc-id>. Snapshots never touch the
+ * branch, HEAD, or the real index. Commit subject:
  *   "<ISC-id> (<slug>): <sanitized description>"
  *
  * Idempotent via sidecar state file: MEMORY/WORK/<slug>/.checkpoint-state.json.
@@ -19,10 +20,10 @@
  * clean -fd/push --force).
  */
 
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { basename, dirname, join } from 'node:path';
-import { homedir } from 'node:os';
+import { basename, dirname, join, isAbsolute } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { parseFrontmatter, parseCriteriaList, ARTIFACT_FILENAME, LEGACY_ARTIFACT_FILENAME } from './lib/isa-utils';
 
 // Allowlist path: top of ~/.claude per spec. This file is read-only here
@@ -82,11 +83,12 @@ function saveState(stateFile: string, state: CheckpointState): void {
   }
 }
 
-function gitRun(repo: string, args: string[]): string {
+function gitRun(repo: string, args: string[], env?: NodeJS.ProcessEnv): string {
   return execFileSync('git', ['-C', repo, ...args], {
     encoding: 'utf-8',
     timeout: GIT_TIMEOUT_MS,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: env ?? process.env,
   });
 }
 
@@ -99,34 +101,57 @@ function isGitRepo(repo: string): boolean {
   }
 }
 
-function hasChanges(repo: string): boolean {
-  try {
-    return gitRun(repo, ['status', '--porcelain']).trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
 function sanitizeMessage(s: string): string {
   return s.replace(/\s+/g, ' ').replace(/[`$]/g, '').trim().slice(0, 200);
 }
 
-function commitInRepo(repo: string, iscId: string, slug: string, description: string): string | null {
+function refComponent(s: string): string {
+  return s.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+|\.+$/g, '').replace(/\.\.+/g, '.') || '_';
+}
+
+/**
+ * Snapshot the whole working tree (tracked + untracked, .gitignore honored)
+ * as a commit that lives only under refs/checkpoints/<slug>/<isc-id>.
+ *
+ * Uses a throwaway index seeded from the real one, so the repo's own index,
+ * HEAD, and branch are never touched: no staged work gets swept in, no commit
+ * lands on the branch, and concurrent sessions' edits never appear in branch
+ * history under this ISC's name. Until 2026-09-27 this was `git add -A` +
+ * `git commit` on the current branch, which did all three.
+ */
+function snapshotInRepo(repo: string, iscId: string, slug: string, description: string): string | null {
+  const tmpIndex = join(tmpdir(), `pai-checkpoint-${process.pid}-${Date.now()}.index`);
   try {
-    gitRun(repo, ['add', '-A']);
+    const gitIndexRel = gitRun(repo, ['rev-parse', '--git-path', 'index']).trim();
+    const realIndex = isAbsolute(gitIndexRel) ? gitIndexRel : join(repo, gitIndexRel);
+    // Seeding from the real index keeps stat info, so `add -A` only rehashes changed files
+    if (existsSync(realIndex)) copyFileSync(realIndex, tmpIndex);
+    const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+
+    gitRun(repo, ['add', '-A'], env);
+    const tree = gitRun(repo, ['write-tree'], env).trim();
+    let parent: string | null = null;
+    try { parent = gitRun(repo, ['rev-parse', '--verify', 'HEAD']).trim(); } catch { /* unborn branch */ }
+
     // iscId already has the canonical "ISC-<N>" form (or "ISC-<N>-A-<M>" for
     // anti-criteria) per parseCriteriaList — use it verbatim, do not re-prefix.
+    // Checkpoint.ts finds snapshots by this subject via `git log --all --grep`.
     const subject = `${iscId} (${slug}): ${sanitizeMessage(description)}`;
-    // --no-verify skips husky/pre-commit hooks; --no-gpg-sign avoids GPG
-    // passphrase prompts that would hang the session blocking on stdin.
-    gitRun(repo, ['commit', '-m', subject, '--quiet', '--no-verify', '--no-gpg-sign']);
-    const sha = gitRun(repo, ['rev-parse', 'HEAD']).trim();
+    // commit-tree runs no hooks; --no-gpg-sign avoids passphrase prompts that would hang.
+    const commitArgs = ['commit-tree', tree, '-m', subject, '--no-gpg-sign'];
+    if (parent) commitArgs.push('-p', parent);
+    const sha = gitRun(repo, commitArgs).trim();
+
+    const ref = `refs/checkpoints/${refComponent(slug)}/${refComponent(iscId)}`;
+    gitRun(repo, ['update-ref', '-m', `checkpoint ${iscId} (${slug})`, ref, sha]);
     return sha;
   } catch (err: unknown) {
     const e = err as { stderr?: { toString?: () => string }; message?: string };
     const detail = e?.stderr?.toString?.() || e?.message || String(err);
-    console.error(`[CheckpointPerISC] commit failed in ${repo} for ${iscId}: ${detail}`);
+    console.error(`[CheckpointPerISC] snapshot failed in ${repo} for ${iscId}: ${detail}`);
     return null;
+  } finally {
+    try { if (existsSync(tmpIndex)) unlinkSync(tmpIndex); } catch { /* best-effort */ }
   }
 }
 
@@ -181,8 +206,8 @@ async function main() {
         console.error(`[CheckpointPerISC] not a git repo: ${repo}`);
         continue;
       }
-      if (!hasChanges(repo)) continue;
-      const sha = commitInRepo(repo, isc.id, slug, isc.description);
+      // Snapshot even when the tree is clean: the ref still marks "state at this ISC"
+      const sha = snapshotInRepo(repo, isc.id, slug, isc.description);
       if (sha) state.last_commit_sha[repo] = sha;
     }
     state.committed_iscs.push(isc.id);

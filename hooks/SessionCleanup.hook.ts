@@ -197,6 +197,12 @@ async function main() {
     // Mark work as complete and clear state
     clearSessionWork(sessionId);
 
+    // Pre-compaction handover (PreCompact.hook.ts) is only useful mid-session
+    if (sessionId) {
+      const handover = join(STATE_DIR, `handover-${sessionId}.md`);
+      try { if (existsSync(handover)) unlinkSync(handover); } catch { /* best-effort */ }
+    }
+
     // Reset Kitty tab to neutral styling — no lingering colored backgrounds
     try {
       setTabState({ title: '', state: 'idle', sessionId });

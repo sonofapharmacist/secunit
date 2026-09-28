@@ -189,7 +189,12 @@ async function main() {
   const verbose = process.argv.includes('--verbose');
   const jsonOutput = process.argv.includes('--json');
   const verify = process.argv.includes('--verify');
-  
+  // --strict: exit 1 on ANY finding, verified or not. Release gates use this: an
+  // unverifiable credential (a private key, a token for a host TruffleHog can't reach,
+  // a live key whose verifier was rate-limited) is still a leak. Default mode keeps the
+  // original verified-only exit for interactive use.
+  const strict = process.argv.includes('--strict');
+
   if (!existsSync(targetDir)) {
     console.error(`❌ Directory not found: ${targetDir}`);
     process.exit(1);
@@ -219,9 +224,9 @@ async function main() {
       formatFindings(findings, verbose);
     }
     
-    // Exit with error code if verified secrets found
+    // Exit with error code if verified secrets found (or any finding under --strict)
     const findings = parseTruffleHogOutput(output);
-    if (findings.some(f => f.Verified)) {
+    if (strict ? findings.length > 0 : findings.some(f => f.Verified)) {
       process.exit(1);
     }
   } catch (error) {

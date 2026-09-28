@@ -595,13 +595,18 @@ function reviewFlaggedChunk(repoPath: string, label: string, chunkText: string, 
   }
 }
 
-// ── Flash reviewer (default since 2026-09-25) ────────────────────────────────
+// ── Flash reviewer (opt-in via --reviewer flash; default 2026-09-25 → 2026-09-27) ──
 // Workload bench (PAI/USER/Evals/WorkloadBench, use case code-review-diff-rerank, 10 real fix
 // commits × 5 reps): jailed Gemini 3.8 Flash Medium + this triage prompt scored pass^5 0.50 /
 // 37 of 50 reps vs Sonnet 0.40 / 34 of 50 on the same prompt, at no marginal cost (AI Pro via agy).
 // So every code chunk is reviewed directly; the local security pre-filter (whose fast tier on
 // your-inference-host :11436 has been down since ~2026-08-27) is not needed on this path. Runs in AgyJail:
-// no $HOME view, cleared env, tool attempts fail the chunk closed. Legacy path: --reviewer sonnet.
+// no $HOME view, cleared env, tool attempts fail the chunk closed.
+// 2026-09-27: reverted to Sonnet as the default. In production, at least 5 of Flash's first 7
+// "high" findings were false positives: claims about code outside the diff (a regex the error
+// formatter matches, an already-guarded index) and APIs newer than its training data
+// (Bun.YAML). The bench put each bug inside the snippet, so it never measured either failure.
+// See ISA 20260923-105803_workload-bench-gemini-38-flash, Decisions 2026-09-27.
 const FLASH_REVIEW_MODEL = "gemini-3.8-flash-medium"
 const FLASH_REVIEW_SYSTEM = `You are a senior code reviewer for a TypeScript/Bun codebase. Review the diff you are given for correctness bugs introduced or left in place by the change: logic errors, unhandled failure modes, wrong assumptions about the runtime environment, data loss, and security defects. Ignore style, naming, and formatting.
 
@@ -909,7 +914,7 @@ async function main(): Promise<void> {
   const dryRun = args.includes("--dry-run")
   const localModelIdx = args.indexOf("--local-model")
   const reviewerIdx = args.indexOf("--reviewer")
-  const reviewer = reviewerIdx !== -1 ? requireFlagValue(args, reviewerIdx, "--reviewer") : "flash"
+  const reviewer = reviewerIdx !== -1 ? requireFlagValue(args, reviewerIdx, "--reviewer") : "sonnet"
   if (reviewer !== "flash" && reviewer !== "sonnet") {
     console.error(`--reviewer must be flash or sonnet, got ${reviewer}`)
     process.exit(1)

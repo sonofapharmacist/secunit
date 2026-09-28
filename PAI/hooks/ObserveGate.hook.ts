@@ -162,6 +162,9 @@ function main(): void {
     if (proposed === null) allow();
     const next = frontmatterPhase(proposed);
     if (next === null || next === "observe") allow();
+    // Closing a stub without doing the work needs no criteria: the gate exists so work doesn't
+    // START without them. `complete` stays gated (PhaseTransitionGuard also requires evidence).
+    if (next === "abandoned" || next === "superseded") allow();
     const problems = readinessProblems(proposed);
     if (problems.length > 0) {
       block(

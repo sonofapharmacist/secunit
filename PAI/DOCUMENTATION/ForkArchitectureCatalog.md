@@ -4,7 +4,7 @@ What this installation added on top of the PAI scaffold pulled at `45aa5f65` (20
 
 **Scale:** 1,949 → 8,230 files. 6,883 changed — 6,353 added, 394 modified, 64 renamed, 72 deleted. +1,026,875 / −20,462 lines. 1,051 commits, no upstream remote, nothing pushed back.
 
-The ADR corpus (`PAI/DOCUMENTATION/Decisions/`, 32 records) is the narrative spine — most architectural moves below have a corresponding record with context, alternatives rejected, and consequences.
+The ADR corpus (`PAI/DOCUMENTATION/Decisions/`, 36 records) is the narrative spine — most architectural moves below have a corresponding record with context, alternatives rejected, and consequences.
 
 ---
 
@@ -33,7 +33,7 @@ The `new-subsystem-security-system` ADR originally claimed `SecurityPipeline.hoo
 
 Pattern credited in-source to Goose's `ToolInspectionManager`.
 
-**ADRs:** `new-subsystem-security-system`, `containment-enforcement-consolidation`, `passage-secret-disclosure-guard`, `hook-wiring-5-orphaned-hooks-2026-07`, `bash-path-policy-zero-access-2026-09`.
+**ADRs:** `new-subsystem-security-system`, `containment-enforcement-consolidation`, `passage-secret-disclosure-guard`, `hook-wiring-5-orphaned-hooks-2026-07`, `bash-path-policy-zero-access-2026-09`, `contentscanner-tool-response-field-and-hook-contracts`, `release-secretscan-strict-and-leak-harness`.
 
 ---
 

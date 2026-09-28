@@ -12,10 +12,11 @@
  *
  * INPUT:
  * - stdin: Hook input JSON (session_id, transcript_path)
- * - Files: MEMORY/STATE/current-work*.json, active plans, task state
+ * - Files: MEMORY/STATE/work.json (session registry), legacy current-work*.json
  *
  * OUTPUT:
- * - stdout: Structured handover context (preserved through compaction)
+ * - File: MEMORY/STATE/handover-{sessionId}.md (injected post-compaction by LoadContext)
+ * - stdout: Same handover (verbose-mode visibility only; CC does not inject it)
  * - stderr: Status messages
  * - exit(0): Always (non-blocking)
  *
@@ -24,9 +25,9 @@
  * - Typical execution: <100ms
  */
 
-import { existsSync, readFileSync, readdirSync, appendFileSync, mkdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, appendFileSync, mkdirSync, statSync, writeFileSync, renameSync } from 'fs';
 import { join, basename } from 'path';
-import { findArtifactPath } from './lib/isa-utils';
+import { findArtifactPath, readRegistry } from './lib/isa-utils';
 
 const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude', 'PAI');
 const MEMORY_DIR = join(BASE_DIR, 'MEMORY');
@@ -156,14 +157,43 @@ function readText(path: string): string | null {
   }
 }
 
+/**
+ * Find this session's active work. The source of truth is the work.json
+ * registry that ISASync maintains (keyed by ISA slug, carrying sessionUUID).
+ * Nothing in the normal workflow writes current-work*.json — until 2026-09-27
+ * this function read only that, so Active Work was silently empty on every
+ * compaction. The legacy files remain a fallback for manual/older tooling.
+ */
 function getCurrentWork(sessionId?: string): any {
-  // Try session-scoped state first
   if (sessionId) {
-    const scoped = join(STATE_DIR, `current-work-${sessionId}.json`);
-    const data = readJSON(scoped);
+    try {
+      // ISASync stamps the editing session's UUID on any ISA it touches, so a
+      // session that closes old ISAs "owns" them too — skip terminal phases.
+      const TERMINAL = new Set(['complete', 'abandoned', 'superseded']);
+      const matches = Object.entries(readRegistry().sessions ?? {})
+        .filter(([, s]: [string, any]) =>
+          s?.sessionUUID === sessionId && !TERMINAL.has(String(s.phase ?? '').toLowerCase()))
+        .sort(([, a]: [string, any], [, b]: [string, any]) =>
+          String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')));
+      if (matches.length > 0) {
+        const [slug, s] = matches[0] as [string, any];
+        const pending = (s.criteria ?? [])
+          .filter((c: any) => c?.status !== 'completed')
+          .map((c: any) => `${c.id}: ${c.description}`);
+        return {
+          description: s.task,
+          directory: slug,
+          status: [s.phase, s.progress].filter(Boolean).join(' · '),
+          started_at: s.started,
+          open_criteria: pending,
+        };
+      }
+    } catch {
+      // Registry unreadable — fall through to legacy state
+    }
+    const data = readJSON(join(STATE_DIR, `current-work-${sessionId}.json`));
     if (data) return data;
   }
-  // Fall back to legacy global state
   return readJSON(join(STATE_DIR, 'current-work.json'));
 }
 
@@ -255,6 +285,14 @@ async function main() {
       }
     }
 
+    if (work.open_criteria && work.open_criteria.length > 0) {
+      sections.push('');
+      sections.push('### Open Criteria');
+      for (const c of work.open_criteria.slice(0, 20)) {
+        sections.push(`- ${c}`);
+      }
+    }
+
     // Include files changed
     if (work.files_changed && work.files_changed.length > 0) {
       sections.push('');
@@ -288,28 +326,8 @@ async function main() {
     sections.push(`ID: ${input.session_id}`);
   }
 
-  // Section 4: Imperatives (ImperativeExtractor state, if present)
-  if (input.session_id) {
-    const imperativesPath = join(STATE_DIR, `imperatives-${input.session_id}.json`);
-    try {
-      if (existsSync(imperativesPath)) {
-        const impState = JSON.parse(readFileSync(imperativesPath, 'utf-8'));
-        if (impState?.imperatives && impState.imperatives.length > 0) {
-          sections.push('');
-          sections.push('## Imperatives (survive compaction)');
-          sections.push('*These instructions were issued earlier in this session and must still be honored:*');
-          sections.push('');
-          for (const imp of impState.imperatives) {
-            const countSuffix = imp.count > 1 ? ` (×${imp.count})` : '';
-            sections.push(`- [\`${imp.kind}\`] ${imp.text}${countSuffix}`);
-          }
-        }
-      }
-    } catch (err) {
-      // Silent fail — imperatives are best-effort, never block compaction
-      console.error(`[PreCompact] Imperatives read error: ${err}`);
-    }
-  }
+  // Imperatives are not repeated here: LoadContext.hook.ts injects them as
+  // "Standing Instructions" on every SessionStart, including source=compact.
 
   // Only output if we have meaningful context
   if (sections.length > 0) {
@@ -336,7 +354,20 @@ async function main() {
       console.error(`[PreCompact] Handover truncated: tier=${CONTEXT_WINDOW_TIER} budget=${HANDOVER_CHAR_BUDGET} actual=${handover.length}`);
     }
 
-    // stdout: preserved through compaction
+    // Claude Code does not add PreCompact stdout to the model's context — only
+    // SessionStart/UserPromptSubmit stdout is injected. Persist the handover so
+    // LoadContext.hook.ts can inject it on the SessionStart(source=compact)
+    // that follows. stdout is kept for verbose-mode visibility only.
+    if (input.session_id) {
+      try {
+        mkdirSync(STATE_DIR, { recursive: true });
+        const handoverPath = join(STATE_DIR, `handover-${input.session_id}.md`);
+        writeFileSync(`${handoverPath}.tmp`, handover);
+        renameSync(`${handoverPath}.tmp`, handoverPath);
+      } catch (err) {
+        console.error(`[PreCompact] Handover write error: ${err}`);
+      }
+    }
     console.log(handover);
     // stderr: status feedback
     console.error(`[PreCompact] Context captured for compaction handover (${handover.length} chars, tier=${CONTEXT_WINDOW_TIER})`);

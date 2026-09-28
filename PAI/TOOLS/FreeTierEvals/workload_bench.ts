@@ -168,11 +168,11 @@ async function callSonnet(system: string, user: string): Promise<CallResult> {
   return { text: r.out, costUsd: 0, inTok: 0, outTok: 0, error: r.err, ms: r.ms };
 }
 
-async function callLlamacpp(model: string, system: string, user: string, maxTokens: number): Promise<CallResult> {
+async function callLlamacpp(model: string, system: string, user: string, maxTokens: number, url: string = LLAMACPP_URL): Promise<CallResult> {
   const t0 = Date.now();
   try {
     // No sampler params: production (Inference.ts local path) uses llama-server defaults.
-    const res = await fetch(LLAMACPP_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens }),
@@ -237,6 +237,10 @@ const MODELS: Record<string, ModelSpec> = {
   haiku45: { key: "haiku45", label: "Haiku 4.5 (subscription)", concurrency: 3, call: (s, u) => withRetry(() => callHaiku(s, u), 2) },
   solarpro4: { key: "solarpro4", label: "Upstage Solar Pro 4 (OpenRouter)", concurrency: 3, call: (s, u, m) => withRetry(() => callOpenRouter("upstage/solar-pro4", s, u, m, true)) },
   qwen3next: { key: "qwen3next", label: "Qwen3-Next-80B-A3B (your-inference-host)", concurrency: 1, call: (s, u, m) => withRetry(() => callLlamacpp("qwen3_next_80b_a3b", s, u, m), 2) },
+  // Fast-tier slot (:11436). KAT candidate is served on a test port during an eviction window;
+  // KAT_FAST_URL points at it (e.g. an SSH tunnel to the your-inference-host test instance).
+  jackrongfast: { key: "jackrongfast", label: "jackrong MTP 9B (your-inference-host fast tier)", concurrency: 1, call: (s, u, m) => withRetry(() => callLlamacpp("jackrong_v4_pro_qwen35_9b_mtp", s, u, m, `${localInferenceOrigin("11436")}/v1/chat/completions`), 2) },
+  katfast: { key: "katfast", label: "KAT-Coder V2.5 APEX (fast-tier candidate)", concurrency: 1, call: (s, u, m) => withRetry(() => callLlamacpp("kat_coder_v25_apex", s, u, m, process.env.KAT_FAST_URL ?? `${localInferenceOrigin("11499")}/v1/chat/completions`), 2) },
 };
 
 // ── Use case loading ─────────────────────────────────────────────────────────

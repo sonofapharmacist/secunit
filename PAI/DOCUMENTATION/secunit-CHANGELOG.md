@@ -8,6 +8,42 @@ All notable changes to secunit are documented here. Format follows [Keep a Chang
 
 ---
 
+## [0.9.0] — 2026-09-28
+
+Security fixes found by testing the security layer against real inputs instead of hand-built ones. Two controls that looked healthy were not doing their job. Both are fixed and now pinned by tests that fail if they regress.
+
+### Security
+- **ContentScanner was blind to real tool output.** The PostToolUse prompt-injection tripwire (it runs on every tool) read the tool output from a `tool_result` field. Claude Code sends it as `tool_response`, so every real payload scanned as empty and passed. Its earlier verification used a hand-built payload with the same wrong field name, so it could not catch this. **Update if you rely on ContentScanner warnings: before 0.9.0 it never fired in real sessions.**
+  - Reads `tool_response` (and still accepts `tool_result`). Object responses such as Bash `{stdout, stderr}` and Read `{file: {content}}` are scanned string by string.
+  - Fails closed on malformed input: stdin that can't be read is allowed silently, but input that is present and unparseable now injects a warning that the output went unscanned, instead of exiting 0.
+  - Expect the warning when reading security code or fixtures that contain injection phrases. That is the tripwire working.
+- **The release SecretScan gate let unverifiable secrets through.** `SecretScan.ts` failed only when TruffleHog could verify a credential live, and the release read that as clean. A staged private key, or a token for a host TruffleHog can't reach, would ship. New `SecretScan.ts --strict` fails on any finding; `release.ts` always uses it. Default interactive mode is unchanged.
+- **Hook contract tests with real payload shapes** (`hooks/__tests__/security-hooks.contract.test.ts`). They spawn ContentScanner and PromptGuard with payloads mirroring how Claude Code builds them, covering injection, benign, malformed and empty input.
+  - **Drift guard:** every hook registered on PreToolUse, PostToolUse or UserPromptSubmit, command or HTTP, must be classified as a security gate (with a contract test) or an explicit non-gate. A new hook fails the suite until someone decides.
+- **Inspector pipeline fail-closed proof** (`hooks/__tests__/pipeline.failclosed.test.ts`). A throwing inspector must yield `require_approval` and short-circuit; a later inspector that would allow cannot rescue it. `PromptInspector` gets its first unit tests (19), including the two-phase exfiltration rule.
+
+### Added
+- **`PAI/TOOLS/ReleaseLeakTest.ts` — regression harness for the release gates.** Runs the real `release.ts --scan-only` (never a push) against a disposable hardlink copy of the tree seeded with canaries.
+  - **Checks:** eight private-zone canaries must be absent from the staged output; the identifier, SecretScan and private-zone gates must each fire on a planted leak and name the file; nothing may write through into the real tree.
+  - **Self-test:** `--mutate-keep-memory` disables the `MEMORY/` strip in the fixture copy and must fail.
+  - **Pulse job** `release-leak-test`, Saturday 05:00. `--notify` posts to `/notify` on failure, because Pulse only logs failed script jobs.
+  - Its first run found the SecretScan gap above and a false positive that would have blocked the next release.
+- **`PAI/TOOLS/IsaLint.ts` — ISA frontmatter check.** Catches duplicate `phase:` / `progress:` keys (an appended line that makes an ISA read as open while it says complete), unknown phase values, unclosed frontmatter and malformed progress. Legacy frontmatter-less ISAs are reported as notes, not failures.
+- **Weekly Gemini Flash regression canary.** Pulse job `workload-bench-flash-canary` runs the workload bench's six use cases at one rep and alerts when a use case falls below its floor.
+- **`PAI/TOOLS/agy-egress-lockdown.sh` — uid-isolated Antigravity (agy) jail.** Creates a dedicated system user, installs a bubblewrap wrapper callable only through a single sudoers rule, and adds an nftables table that rejects the jail user's traffic to loopback, LAN, CGNAT and IPv6 ranges while allowing DNS and public egress. Supports `--remove`. `AgyJail.ts` uses it automatically when installed.
+
+### Changed
+- **PhaseTransitionGuard accepts inline criterion evidence.** A backticked or quoted checkable claim on the `- [x] ISC-N:` line itself now counts, not only a line under `## Verification`. The bar is unchanged: prose-only criteria still block.
+- **ISC checkpoints snapshot off-branch.** `CheckpointPerISC` no longer commits to your branch; it writes a snapshot commit under `refs/checkpoints/<slug>/<isc>` from a temporary index. `Checkpoint.ts rollback` prints the restore command; `Checkpoint.ts prune` cleans old refs.
+- **Pre-compaction handover reaches the model.** PreCompact writes a per-session handover file, and LoadContext injects it on the `compact` SessionStart. PreCompact stdout never reached the model. It also skips completed, abandoned and superseded ISAs when picking the active one.
+- **ImperativeExtractor runs on UserPromptSubmit** and reads the prompt directly, with sentence-level patterns. Old-format imperative files are ignored.
+- **Nightly code review defaults to Sonnet again.** Gemini Flash stays available via `--reviewer flash`; on production diffs its "high" findings were mostly false positives about code outside the diff or APIs newer than its training data.
+
+### Fixed
+- **Identifier gate false positive on reserved IP ranges.** `agy-egress-lockdown.sh` lists reserved CIDR blocks, which the Tailscale/LAN patterns matched, and the release would have failed. That one file is whitelisted for the three IP patterns.
+
+---
+
 ## [0.8.1] — 2026-09-27
 
 ### Security

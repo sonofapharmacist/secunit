@@ -38,6 +38,8 @@ const OBS_DIR = join(PAI_DIR, "MEMORY", "OBSERVABILITY");
 const LEDGER_PATH = join(OBS_DIR, "anthropic-cost.jsonl");
 const CALL_SITES_PATH = join(OBS_DIR, "anthropic-call-sites.json");
 const USAGE_CACHE_PATH = join(PAI_DIR, "MEMORY", "STATE", "usage-cache.json");
+const ALERT_STATE_PATH = join(PAI_DIR, "MEMORY", "STATE", "cost-alert-last.json");
+const ALERT_REPEAT_MS = 24 * 3600 * 1000;
 
 // Alert thresholds — tunable
 const API_SPEND_MONTHLY_ALERT_USD = 5.0;    // even Arbol should stay under $5/mo
@@ -60,7 +62,18 @@ interface CostSnapshot {
     new_since_baseline: string[];
   };
   alerts: string[];
+  alert_keys?: AlertKey[];
 }
+
+// api-spend is money actually leaving (P1). The rest are static-scan or usage
+// warnings that belong in the digest (P2), not on the phone every hour.
+type AlertKey = "api-spend" | "new-call-sites" | "bypass-call-sites" | "subscription-5h";
+const ALERT_SEVERITY: Record<AlertKey, "P1" | "P2"> = {
+  "api-spend": "P1",
+  "new-call-sites": "P2",
+  "bypass-call-sites": "P2",
+  "subscription-5h": "P2",
+};
 
 interface CallSite {
   file: string;
@@ -283,16 +296,21 @@ async function takeSnapshot(): Promise<{ snapshot: CostSnapshot; sites: CallSite
     .map((s) => `${s.file}:${s.line} (${s.classification}) — ${s.reason}`);
 
   const alerts: string[] = [];
+  const alert_keys: AlertKey[] = [];
   if (api_spend.month_used_usd !== null && api_spend.month_used_usd > API_SPEND_MONTHLY_ALERT_USD) {
+    alert_keys.push("api-spend");
     alerts.push(`API spend this month: $${api_spend.month_used_usd.toFixed(2)} (threshold $${API_SPEND_MONTHLY_ALERT_USD})`);
   }
   if (newSites.length > 0) {
+    alert_keys.push("new-call-sites");
     alerts.push(`${newSites.length} NEW API-risk call site(s) since baseline`);
   }
   if (bypass > 0) {
+    alert_keys.push("bypass-call-sites");
     alerts.push(`${bypass} call site(s) classified as BYPASS — review and patch`);
   }
   if (subscription.five_hour_pct !== null && subscription.five_hour_pct > SUB_USAGE_ALERT_PCT) {
+    alert_keys.push("subscription-5h");
     alerts.push(`Subscription 5h window at ${subscription.five_hour_pct}% (threshold ${SUB_USAGE_ALERT_PCT}%)`);
   }
 
@@ -303,26 +321,49 @@ async function takeSnapshot(): Promise<{ snapshot: CostSnapshot; sites: CallSite
       api_spend,
       call_sites: { total: sites.length, bypass, legit, new_since_baseline: newSites },
       alerts,
+      alert_keys,
     },
     sites,
   };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Voice alert via Pulse
+// Alert via Pulse /notify
 // ──────────────────────────────────────────────────────────────────────────
 
-async function voiceAlert(message: string): Promise<void> {
+/**
+ * Which alert keys to post now. The job runs hourly and the message carries live
+ * numbers, so /notify dedup (fingerprint includes the message) would let the same
+ * condition through every hour. Post when a key is new since the last post, or
+ * when the last post is older than ALERT_REPEAT_MS.
+ */
+export function keysToPost(keys: AlertKey[], last: { ts: number; keys: AlertKey[] } | null, now: number): AlertKey[] {
+  if (!last || now - last.ts >= ALERT_REPEAT_MS) return keys;
+  return keys.filter((k) => !last.keys.includes(k));
+}
+
+function readAlertState(): { ts: number; keys: AlertKey[] } | null {
   try {
-    await fetch("http://localhost:31337/notify", {
+    const raw = JSON.parse(readFileSync(ALERT_STATE_PATH, "utf-8"));
+    return typeof raw.ts === "number" && Array.isArray(raw.keys) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+async function postAlert(severity: "P1" | "P2", title: string, message: string): Promise<boolean> {
+  try {
+    const res = await fetch("http://localhost:31337/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, voice_enabled: true }),
+      body: JSON.stringify({ title, message, severity, source: "cost-tracker" }),
       signal: AbortSignal.timeout(3000),
     });
+    return res.ok;
   } catch {
     // Pulse may be down — log to stderr instead
-    console.error(`[CostTracker] alert (voice unavailable): ${message}`);
+    console.error(`[CostTracker] alert (Pulse unavailable): ${title}: ${message}`);
+    return false;
   }
 }
 
@@ -400,9 +441,23 @@ async function main(): Promise<void> {
         console.log("No alerts.");
         return;
       }
-      const message = `PAI cost alert: ${snapshot.alerts.join("; ")}`;
-      await voiceAlert(message);
-      console.log(message);
+      const keys = snapshot.alert_keys ?? [];
+      const message = snapshot.alerts.join("; ");
+      console.log(`PAI cost alert: ${message}`);
+      const post = keysToPost(keys, readAlertState(), Date.now());
+      if (post.length === 0) {
+        console.log("Already posted within 24h — not re-sent.");
+        break;
+      }
+      const severity = post.some((k) => ALERT_SEVERITY[k] === "P1") ? "P1" : "P2";
+      const title = post.includes("api-spend")
+        ? "Anthropic API spend over threshold"
+        : post.every((k) => k === "subscription-5h")
+          ? "Subscription 5h window near capacity"
+          : "Anthropic API-risk call sites need review";
+      if (await postAlert(severity, title, message)) {
+        writeFileSync(ALERT_STATE_PATH, JSON.stringify({ ts: Date.now(), keys }), "utf-8");
+      }
       break;
     }
     case "baseline": {

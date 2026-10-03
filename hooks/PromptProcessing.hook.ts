@@ -28,6 +28,8 @@ import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmd
 import { join, dirname } from 'path';
 
 import { inference, detectShellMode } from '../PAI/TOOLS/Inference';
+import { runCascade, loadFloors, appendCascadeRow } from '../PAI/TOOLS/lib/cascade';
+import { classifierContract } from './lib/classifier-cascade';
 import { getIdentity, getPrincipal } from './lib/identity';
 import { isValidWorkingTitle, getWorkingFallback, trimToValidTitle } from './lib/output-validators';
 import { setTabState, getSessionOneWord } from './lib/tab-setter';
@@ -35,6 +37,7 @@ import { paiPath } from './lib/paths';
 import { updateSessionNameInWorkJson, upsertSession } from './lib/isa-utils';
 import { pushStateToTargets } from './lib/observability-transport';
 import { isV8Active, executingModel, scaffoldsFor } from './lib/algorithm-v8';
+import { exitIfAutomated } from './lib/automated-session';
 
 // ── Types ──
 
@@ -855,6 +858,7 @@ function getRecentContext(transcriptPath: string, maxTurns: number = 6, includeA
 // ══════════════════════════════════════════════════
 
 async function main() {
+  exitIfAutomated('PromptProcessing');
   let kvPush: Promise<void> = Promise.resolve();
   try {
     const input = await readStdinWithTimeout();
@@ -1024,16 +1028,19 @@ async function main() {
       // Local llama-server path uses OLLAMA_DEFAULT_TIMEOUT_MS (60s) so local inference gets patience.
       // Claude path uses LEVEL_CONFIG.fast.defaultTimeout (20s) — bumped from 15s when your-inference-host went offline (2026-06-06) since subprocess calls run 12-16s without local Ollama.
       // Adding timeout:15000 here would silently cap llama-server too. See ISA 20260508-local-inference-routing.
-      const result = await inference({
-        systemPrompt: classifierPrompt,
-        userPrompt,
-        expectJson: true,
-        level: 'fast',
-        taskType: 'general',
+      // taskType 'general' routes to ollama.general_model (the 80B), deliberately skipping the fast tier.
+      // Checked 2026-09-29 on workload-bench prompt-classify-mode-tier: 80B 90% pass, p50 673ms, p90 ~2.0s;
+      // KAT (fast tier) 93% pass, p50 3.3s, p90 4.8s. Same quality, ~5x slower, so the classifier stays on the 80B.
+      // Cascade (your-inference-host ISA F4): 80B first, a deterministic verifier on its answer, Haiku on
+      // rejection or error, this hook's fail-safe below if both fail. Floors gate local-first
+      // (USER/Config/cascade-floors.json); one row per prompt goes to inference-calls.jsonl.
+      const cascade = await runCascade(classifierContract, { systemPrompt: classifierPrompt, userPrompt }, {
+        call: inference, floors: loadFloors(), log: appendCascadeRow,
       });
+      const result = { success: cascade.value !== undefined, error: cascade.reasons.join('; ') };
 
-      if (result.success && result.parsed) {
-        const r = result.parsed as InferenceResult;
+      if (cascade.value) {
+        const r: InferenceResult = cascade.value;
 
         // ── Process tab title ──
         let finalTitle = deterministicTitle && isValidWorkingTitle(deterministicTitle) ? deterministicTitle : getWorkingFallback();
@@ -1060,9 +1067,14 @@ async function main() {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
+                title: 'Working on',
                 message: voiceContent.replace(/\.$/, ''),
+                // P2 + a source: shows as a desktop toast where there is a desktop,
+                // never pushes, and the morning digest drops it as chatter.
+                severity: 'P2',
+                source: 'prompt-title',
               }),
-              signal: AbortSignal.timeout(5000),
+              signal: AbortSignal.timeout(1500),
             });
           } catch {}
         }

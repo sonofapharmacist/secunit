@@ -34,6 +34,7 @@ import { getPaiDir } from './lib/paths';
 import { getPSTComponents } from './lib/time';
 import { getDAName, getPrincipalName } from './lib/identity';
 import { parseTranscript } from '../PAI/TOOLS/TranscriptParser';
+import { exitIfAutomated } from './lib/automated-session';
 
 interface HookInput {
   session_id: string;
@@ -231,6 +232,7 @@ function initDailyFile(filepath: string): void {
 }
 
 async function main() {
+  exitIfAutomated('RelationshipMemory');
   try {
     console.error('[RelationshipMemory] Hook started');
 

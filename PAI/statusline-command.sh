@@ -20,7 +20,7 @@ QUOTE_CACHE="$PAI_DIR/.quote-cache"
 LOCATION_CACHE="$PAI_DIR/MEMORY/STATE/location-cache.json"
 WEATHER_CACHE="$PAI_DIR/MEMORY/STATE/weather-cache.json"
 USAGE_CACHE="/tmp/pai-usage-${USER:-anon}.json"
-LEARNING_CACHE="$PAI_DIR/MEMORY/STATE/learning-cache.sh"
+TYPED_RATINGS_CACHE="$PAI_DIR/MEMORY/STATE/typed-ratings-cache.sh"
 
 # Work-profile gate. Returns 0 (true) on a work machine, where we suppress
 # personal-context UI elements (STATE meters tied to TELOS, version banner,
@@ -101,7 +101,7 @@ settings_has_counts="${settings_has_counts:-false}"
 # │ Weather         │  900s  │ 15 min: weather changes slowly                   │
 # │ Counts          │ n/a    │ Read directly from settings.json (stop hook)     │
 # │ Usage           │  900s  │ 15 min: /api/oauth/usage has aggressive 429 limits│
-# │ Learning        │   30s  │ Ratings change infrequently mid-session          │
+# │ Typed ratings   │ 3600s  │ Also rebuilt when ratings.jsonl changes          │
 # │ Session name    │ mtime  │ Invalidated when source files change             │
 # │ Quote           │   60s  │ 1 min: keyed ZenQuotes is effectively unlimited  │
 # │ Model           │ n/a    │ Written once per session, no TTL                 │
@@ -1207,20 +1207,44 @@ if [ "$MODE" != "normal" ]; then
         fi
     fi
 
-    # Learning: load from cache
+    # Learning: typed ratings only, same rules as summarizeTypedRatings in
+    # hooks/lib/learning-readback.ts. Rows before 2026-10-02 with a comment were
+    # parser misreads; under 3 in 30 days shows "—". Score is the 7-day average
+    # (30-day if the week is empty); trend compares week to month.
     _learn_score="—"; _learn_trend="→"
-    if [ -f "$LEARNING_CACHE" ]; then
-        source "$LEARNING_CACHE"
-        if [ -n "$today_avg" ] && [ "$today_avg" != "—" ]; then
-            _learn_score="$today_avg"
-        elif [ -n "$week_avg" ] && [ "$week_avg" != "—" ]; then
-            _learn_score="$week_avg"
+    if [ -f "$RATINGS_FILE" ]; then
+        _tr_age=999999
+        [ -f "$TYPED_RATINGS_CACHE" ] && _tr_age=$((NOW_EPOCH - $(get_mtime "$TYPED_RATINGS_CACHE")))
+        if [ "$_tr_age" -gt 3600 ] || [ "$(get_mtime "$RATINGS_FILE")" -gt "$(get_mtime "$TYPED_RATINGS_CACHE")" ]; then
+            grep -E '"source":"(user_)?explicit"' "$RATINGS_FILE" 2>/dev/null | jq -rs --argjson now "$NOW_EPOCH" '
+              def epoch: (.[0:19] + "Z" | fromdateiso8601) as $t | (.[19:] | sub("^\\.[0-9]+"; "")) as $z
+                | if ($z | test("^[+-][0-9]{2}:[0-9]{2}$"))
+                  then $t - (($z[0:1] + "1" | tonumber) * (($z[1:3] | tonumber) * 3600 + ($z[4:6] | tonumber) * 60))
+                  else $t end;
+              def avg: if length == 0 then null else (map(.rating) | add / length) end;
+              [ .[] | select((.rating | type) == "number")
+                    | select((.comment and (.timestamp[0:10] < "2026-10-02")) | not)
+                    | . + {age: ($now - (.timestamp | epoch))} ] as $typed
+              | ($typed | map(select(.age <= 7 * 86400)) | avg) as $w
+              | ($typed | map(select(.age <= 30 * 86400))) as $m
+              | if ($m | length) < 3 then "typed_score=\"—\"\ntyped_trend=flat"
+                else ($m | avg) as $ma
+                  | "typed_score=\"" + ((($w // $ma) * 10 | round) / 10 | tostring) + "\"\n"
+                  + "typed_trend=" + (if $w == null then "flat" elif $w > $ma + 0.5 then "up" elif $w < $ma - 0.5 then "down" else "flat" end)
+                end' > "$TYPED_RATINGS_CACHE.tmp" 2>/dev/null \
+                && mv "$TYPED_RATINGS_CACHE.tmp" "$TYPED_RATINGS_CACHE" || rm -f "$TYPED_RATINGS_CACHE.tmp"
         fi
-        case "$trend" in
-            up)   _learn_trend="↗" ;;
-            down) _learn_trend="↘" ;;
-            *)    _learn_trend="→" ;;
-        esac
+        if [ -f "$TYPED_RATINGS_CACHE" ]; then
+            typed_score=""; typed_trend=""
+            # shellcheck disable=SC1090
+            source "$TYPED_RATINGS_CACHE"
+            [ -n "$typed_score" ] && _learn_score="$typed_score"
+            case "$typed_trend" in
+                up)   _learn_trend="↗" ;;
+                down) _learn_trend="↘" ;;
+                *)    _learn_trend="→" ;;
+            esac
+        fi
     fi
     _learn_color=$(get_rating_color "$_learn_score")
 

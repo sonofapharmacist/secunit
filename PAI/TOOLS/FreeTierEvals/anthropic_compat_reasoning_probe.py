@@ -35,6 +35,13 @@ ENDPOINTS = {
         "passage_key": "api/anthropic",
         "is_reasoning": False,
     },
+    "sonnet55": {
+        "name": "Claude Sonnet 5.5 (Anthropic native, launched 2026-09-28)",
+        "url": "https://api.anthropic.com/v1/messages",
+        "model": "claude-sonnet-5-5",
+        "passage_key": "api/anthropic",
+        "is_reasoning": False,
+    },
     "opus55": {
         "name": "Claude Opus 5.5 (Anthropic native, launched 2026-09-22)",
         "url": "https://api.anthropic.com/v1/messages",
@@ -369,6 +376,11 @@ def call_anthropic(target_key: str, prompt: str, max_tokens: int, is_reasoning: 
     # as GLM-5.3 above, scoped to this model only.
     if cfg["model"] == "claude-sonnet-5":
         payload["max_tokens"] = payload["max_tokens"] + 2048
+    # Sonnet 5.5 runs adaptive thinking by default; on C5/C6 the (omitted) thinking
+    # trace ate the whole task cap and returned zero text (stop_reason=max_tokens,
+    # confirmed 2026-10-02 raw probe). C5 needed +8192 to reach end_turn. Model-scoped.
+    if cfg["model"] == "claude-sonnet-5-5":
+        payload["max_tokens"] = payload["max_tokens"] + 8192
 
     data = json.dumps(payload).encode()
     req = urllib.request.Request(

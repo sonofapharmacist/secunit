@@ -27,7 +27,7 @@ mock.module(INFERENCE_MODULE, () => ({
 let createRulesInspector: () => import('../security/types.ts').Inspector;
 
 // PAI_DIR for rules file path — point to a tmpdir so we control existence
-import { mkdtempSync, mkdirSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
 const tmpPaiDir = mkdtempSync(join(tmpdir(), 'secunit-rules-test-'));
@@ -46,8 +46,11 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  process.env.PAI_DIR = origPaiDir;
-  try { unlinkSync(rulesFilePath); } catch { /* ok */ }
+  if (origPaiDir === undefined) delete process.env.PAI_DIR;
+  else process.env.PAI_DIR = origPaiDir;
+  // Remove the whole temp tree, not just the rules file: the empty USER/SECURITY
+  // dirs used to pile up in /tmp, one per test run.
+  rmSync(tmpPaiDir, { recursive: true, force: true });
 });
 
 function ctx(command: string): InspectionContext {

@@ -384,6 +384,12 @@ const ROSTER: SlotSpec[] = [
     timeoutSec: 600, maxTokens: 8192,
   },
   {
+    key: "sonnet55", label: "Claude Sonnet 5.5 (Anthropic direct, launched 2026-09-28)",
+    provider: "anthropic", model: "claude-sonnet-5-5",
+    effort: "medium",
+    timeoutSec: 300, maxTokens: 8192,
+  },
+  {
     key: "opus55", label: "Claude Opus 5.5 (Anthropic direct, launched 2026-09-22)",
     provider: "anthropic", model: "claude-opus-5-5",
     effort: "medium",
@@ -1022,6 +1028,7 @@ const PRICING: Record<
   // Also above: claude-sonnet-5 (grader) 3/15 -> 2/10; GPT-5.6 Luna/Terra went UP, Sol down.
   "claude-opus-4-8": { input: 5, output: 25, thinking: 25 },
   "claude-opus-5-5": { input: 4, output: 20, thinking: 20 },
+  "claude-sonnet-5-5": { input: 2, output: 10, thinking: 10 },
   "claude-fable-5-1": { input: 10, output: 50, thinking: 50 },
   "claude-sonnet-4-6": { input: 3, output: 15, thinking: 15 },
   "MiniMax/MiniMax-M3": { input: 0.3, output: 1.2 },

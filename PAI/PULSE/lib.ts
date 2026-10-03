@@ -211,17 +211,9 @@ async function dispatchSingle(output: string, target: OutputTarget, jobName: str
       }
 
       case "ntfy": {
-        const topic = process.env.NTFY_TOPIC
-        if (!topic) {
-          log("warn", "ntfy dispatch skipped: missing NTFY_TOPIC")
-          return
-        }
-        await fetch(`https://ntfy.sh/${topic}`, {
-          method: "POST",
-          headers: { Title: `PAI: ${jobName}`, Priority: "3" },
-          body: output.slice(0, 4096),
-          signal: AbortSignal.timeout(timeout),
-        })
+        // Same governed path as /notify: dedup, quiet hours, flood control, redaction.
+        const { deliverAlert } = await import("./Notify")
+        await deliverAlert({ title: `Pulse: ${jobName}`, message: output.slice(0, 480), severity: "P1", source: jobName })
         break
       }
 

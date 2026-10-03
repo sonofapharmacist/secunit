@@ -62,9 +62,10 @@ async function main(): Promise<void> {
     const { modifiedFiles, docsToCheck } = payload;
     // Inference.ts and the analysis log to stderr, which the spawner points at the log file.
     const result = await runInferenceAnalysis(new Set<string>(modifiedFiles), docsToCheck, TIMEOUT_MS);
-    if (result.edits.length > 0) enqueueEdits(result.edits);
+    const q = result.edits.length > 0 ? enqueueEdits(result.edits, 'worker') : { added: 0, duplicates: 0, rejectedAgain: 0 };
     writeState({ fingerprint, status: result.ok ? 'ok' : 'failed', error: result.error, finishedAt: new Date().toISOString() });
-    log(`${result.ok ? 'done' : 'FAILED'} in ${Date.now() - start}ms: ${result.edits.length} edit(s) queued` +
+    log(`${result.ok ? 'done' : 'FAILED'} in ${Date.now() - start}ms: ${q.added} edit(s) queued` +
+      ` (${q.duplicates} duplicate(s), ${q.rejectedAgain} previously rejected skipped)` +
       ` (${modifiedFiles.length} modified files, ${docsToCheck.length} docs)${result.error ? ` :: ${result.error}` : ''}`);
   } catch (error) {
     writeState({ fingerprint, status: 'failed', error: String(error), finishedAt: new Date().toISOString() });

@@ -55,6 +55,22 @@ describe('ContentScanner (PostToolUse) — scans the field Claude Code actually 
     expect(ctxOf(r)).toContain('SECURITY WARNING');
   });
 
+  test('injection nested 20 levels deep → warning (no depth cap)', () => {
+    let deep: unknown = INJ;
+    for (let i = 0; i < 20; i++) deep = i % 2 ? [deep] : { k: deep };
+    const r = run('ContentScanner.hook.ts', post('mcp__example__fetch', deep));
+    expect(ctxOf(r)).toContain('SECURITY WARNING');
+  });
+
+  test('payload with neither tool_response nor tool_result → unscanned warning, not silent', () => {
+    const r = run('ContentScanner.hook.ts', JSON.stringify({
+      hook_event_name: 'PostToolUse', session_id: 'contract', tool_name: 'Bash',
+      tool_input: {}, tool_output_renamed: INJ, tool_use_id: 'toolu_contract', duration_ms: 5,
+    }));
+    expect(r.status).toBe(0);
+    expect(ctxOf(r)).toContain('was not scanned');
+  });
+
   test('benign tool_response → silent allow', () => {
     const r = run('ContentScanner.hook.ts', post('Bash', { stdout: 'total 12\n-rw-r--r-- 1 u u 90 README.md', stderr: '' }));
     expect(r.status).toBe(0);

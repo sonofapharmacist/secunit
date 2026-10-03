@@ -118,7 +118,7 @@ USER tier    ->  Personal customizations, private policies, overrides
 
 When PAI needs configuration, it follows a cascading lookup: check USER location first, fall back to SYSTEM location, then use defaults. USER always wins.
 
-Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. The secunit release system (`PAI/TOOLS/release.ts`) produces a sanitized public copy via **containment**: clone the live tree, delete sensitive zones (USER, MEMORY, private underscore-prefixed skills), overlay fixed public templates, scaffold empty USER/MEMORY, and run four gates (ADR stubs, SecretScan, identifier, Grype). PAI repo ships with zero personal data.
+Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. The secunit release system (`PAI/TOOLS/release.ts`) produces a sanitized public copy via **containment**: clone the live tree, delete sensitive zones (USER, MEMORY, and skills that are underscore-prefixed or on the `PRIVATE_SKILL_DIRS` deny-list), overlay fixed public templates, scaffold empty USER/MEMORY, and run four gates (ADR stubs, SecretScan, identifier, Grype). PAI repo ships with zero personal data.
 
 ---
 
@@ -157,7 +157,7 @@ Layer 3: DYNAMIC CONTEXT (session-specific, ephemeral, does NOT survive compacti
 |------|---------|
 | `~/.claude/CLAUDE.md` | Operational procedures (directly edited) |
 | `~/.claude/settings.json` | Runtime settings (directly edited) |
-| `hooks/LoadContext.hook.ts` | Injects startup files + dynamic context |
+| `hooks/LoadContext.hook.ts` | Injects dynamic context (static files load via @imports) |
 | `hooks/RestoreContext.hook.ts` | Re-injects critical files after compaction |
 
 ---
@@ -170,7 +170,7 @@ Each subsystem has its own detailed documentation. This section provides orienta
 
 **The 7-phase execution engine at the center of PAI.**
 
-Transitions from CURRENT STATE to IDEAL STATE via verifiable Ideal State Criteria (ISC): Observe -> Think -> Plan -> Build -> Execute -> Verify -> Learn. Supports three execution modes: interactive (human-in-the-loop), loop (autonomous), and optimize (hill-climbing against a metric). The Algorithm is versioned independently and self-improves through accumulated learning signals.
+Transitions from CURRENT STATE to IDEAL STATE via verifiable Ideal State Criteria (ISC): Observe -> Think -> Plan -> Build -> Execute -> Verify -> Learn. Supports four execution modes: interactive (human-in-the-loop), loop (autonomous), ideate (evolutionary ideation), and optimize (hill-climbing against a metric). The Algorithm is versioned independently and self-improves through accumulated learning signals.
 
 - **Version:** v8.0.0
 - **Location:** `PAI/ALGORITHM/` (canonical pointer: `LATEST` → `v8.0.0.md`; v7.1.1 kept for rollback)
@@ -182,7 +182,7 @@ Transitions from CURRENT STATE to IDEAL STATE via verifiable Ideal State Criteri
 
 **Composite skills are the organizational unit for all domain expertise.**
 
-Each skill lives in `~/.claude/skills/<Skillname>/` with a mandatory `SKILL.md` defining triggers, workflows, and tools. Skills self-activate based on user intent via `USE WHEN` descriptions parsed by Claude Code. **Naming encodes the public/private boundary** — public skills use `TitleCase` (templated, safe, ships in PAI public release); private skills use `_ALLCAPS` with a leading underscore (anything personal, identity-bound, customer-bound, or environment-specific; excluded from release tooling via the `PRIVATE_SKILL_DIRS` allowlist and `_` prefix check in `PAI/TOOLS/release.ts`). Within a skill, sub-files (workflows, references, tools) always use `TitleCase` regardless of the parent skill's form.
+Each skill lives in `~/.claude/skills/<Skillname>/` with a mandatory `SKILL.md` defining triggers, workflows, and tools. Skills self-activate based on user intent via `USE WHEN` descriptions parsed by Claude Code. **Naming encodes the public/private boundary** — public skills use `TitleCase` (templated, safe, ships in PAI public release); private skills use `_ALLCAPS` with a leading underscore (anything personal, identity-bound, customer-bound, or environment-specific; excluded from release tooling via the `PRIVATE_SKILL_DIRS` deny-list and `_` prefix check in `PAI/TOOLS/release.ts`). Within a skill, sub-files (workflows, references, tools) always use `TitleCase` regardless of the parent skill's form.
 
 - **Status:** Active
 - **Location:** `~/.claude/skills/`
@@ -233,7 +233,7 @@ Agents default to inheriting the parent model (often Opus). Use the model parame
 
 **Direct editing of configuration files with shadow release for public sanitization.**
 
-Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. `PAI_CONFIG.yaml` remains as a credentials store for private skills. The secunit release system (`PAI/TOOLS/release.ts`) produces public staging via **containment**: rsync clone with hard exclusions → delete sensitive zones (USER, MEMORY, skills/_*) → overlay fixed public templates → scaffold → run four gates (ADR stubs, SecretScan, identifier, Grype).
+Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. `PAI_CONFIG.yaml` remains as a credentials store for private skills. The secunit release system (`PAI/TOOLS/release.ts`) produces public staging via **containment**: rsync clone with hard exclusions → delete sensitive zones (USER, MEMORY, `skills/_*` and deny-listed skills) → overlay fixed public templates → scaffold → run four gates (ADR stubs, SecretScan, identifier, Grype).
 
 - **Status:** Active (containment-based since v5; retired filter-walker/reverse-templating)
 - **Location:** `PAI/TOOLS/release.ts`
@@ -244,7 +244,7 @@ Configuration files (`settings.json`, `CLAUDE.md`) are directly edited. `PAI_CON
 
 **Four-hook inspector pipeline with SYSTEM/USER two-tier pattern architecture.**
 
-SecurityPipeline (PreToolUse: Bash, Write, Edit, MultiEdit, Read) runs a composable inspector chain -- PatternInspector(100), CanaryInspector(95), EgressInspector(90), RulesInspector(50) -- sorted by priority descending, short-circuiting on the first `deny`. RulesInspector is effectively inert (no SECURITY_RULES.md on disk, and an empty one counts as none; all rules migrated to deterministic inspectors) but remains wired so policy rules can be reintroduced without a code change; when a rules file exists it evaluates them with LLM inference and fails closed on any unparseable or unexpected response. ContentScanner (PostToolUse: WebFetch, WebSearch) runs InjectionInspector(80) to detect prompt injection in external content. SmartApprover (PermissionRequest) auto-approves trusted workspaces with read/write classification. PromptGuard (UserPromptSubmit) runs PromptInspector(95) for heuristic-only detection of injection, exfiltration, evasion, and security disable attempts -- no LLM inference. Inspector core lives in `hooks/security/{types,pipeline,logger}.ts` with individual inspectors in `hooks/security/inspectors/`.
+SecurityPipeline (PreToolUse: Bash, Write, Edit, MultiEdit, Read) runs a composable inspector chain -- PatternInspector(100), CanaryInspector(95), EgressInspector(90), RulesInspector(50) -- sorted by priority descending, short-circuiting on the first `deny`. RulesInspector is effectively inert (no SECURITY_RULES.md on disk, and an empty one counts as none; all rules migrated to deterministic inspectors) but remains wired so policy rules can be reintroduced without a code change; when a rules file exists it evaluates them with LLM inference and fails closed on any unparseable or unexpected response. ContentScanner (PostToolUse: every tool, via a matcherless entry) runs InjectionInspector(80) to detect prompt injection in external content. SmartApprover (PermissionRequest) auto-approves trusted workspaces with read/write classification. PromptGuard (UserPromptSubmit) runs PromptInspector(95) for heuristic-only detection of injection, exfiltration, evasion, and security disable attempts -- no LLM inference. Inspector core lives in `hooks/security/{types,pipeline,logger}.ts` with individual inspectors in `hooks/security/inspectors/`.
 
 **Session canary.** CanarySession (SessionStart) plants a per-session token; CanaryInspector checks every PreToolUse call for it. Appearance of the canary in tool arguments, file content, or a URL is a deterministic exfiltration signal rather than a heuristic. HookCanary (SessionStart) separately verifies the hook chain is live, so a silently-unloaded security hook is detectable instead of invisible.
 
@@ -380,11 +380,11 @@ Five states with distinct colors: Inference (purple), Working (orange), Complete
 | Document | Purpose |
 |----------|---------|
 | `PAI/DOCUMENTATION/LifeOs/LifeOsThesis.md` | **Canonical Life OS thesis** -- what PAI is for, the core loop, PAI-MM, RIoT lineage, respark |
-| `PAI/DOCUMENTATION/Tools/Cli.md` | Algorithm CLI (loop/interactive/optimize modes) and Arbol CLI (actions/pipelines) |
+| `PAI/DOCUMENTATION/Tools/Cli.md` | Algorithm CLI (loop/interactive/ideate/optimize modes) and Arbol CLI (actions/pipelines) |
 | `PAI/DOCUMENTATION/Tools/CliFirstArchitecture.md` | CLI-First design pattern: build deterministic CLI tools first, then wrap with AI |
 | `PAI/DOCUMENTATION/Isa/IsaSystem.md` | ISA system architecture -- five identities, three-guardrail taxonomy, twelve-section body, six workflows, two homes, subsystem relationships |
 | `PAI/DOCUMENTATION/IsaFormat.md` | ISA format specification v2.8 -- the single source of truth for every Algorithm run |
-| `PAI/DOCUMENTATION/Tools/Tools.md` | CLI utilities reference: Inference.ts (fast/standard/smart), ActivityParser, and others |
+| `PAI/DOCUMENTATION/Tools/Tools.md` | CLI utilities reference: Inference.ts (fast/standard/smart/fable, plus advisor mode), ActivityParser, and others |
 | `PAI/DOCUMENTATION/Observability/ObservabilitySystem.md` | Full Pulse API reference (~40 endpoints) under "API Reference" section |
 
 ---

@@ -1,19 +1,19 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:55579d2a-8d53-4265-84fb-b3043da55cb6",
+  "serialNumber": "urn:uuid:20a4d9ff-898d-43f3-8bbe-07253ce762c2",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-28T14:58:06Z",
+    "timestamp": "2026-10-03T01:27:58Z",
     "tools": {
       "components": [
         {
           "group": "@cyclonedx",
           "name": "cdxgen",
-          "version": "12.8.4",
-          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.8.4",
+          "version": "12.8.5",
+          "purl": "pkg:npm/%40cyclonedx/cdxgen@12.8.5",
           "type": "application",
-          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.8.4",
+          "bom-ref": "pkg:npm/@cyclonedx/cdxgen@12.8.5",
           "author": "OWASP Foundation",
           "publisher": "OWASP Foundation"
         }
@@ -36,7 +36,7 @@
       "bom-ref": "pkg:npm/@pai/tools",
       "properties": [],
       "type": "application",
-      "version": "0.9.0"
+      "version": "0.10.0"
     },
     "properties": [
       {
@@ -199,7 +199,7 @@
     {
       "group": "",
       "name": "brace-expansion",
-      "version": "5.0.9",
+      "version": "5.0.12",
       "description": "Brace expansion as known from sh/bash",
       "licenses": [
         {
@@ -231,7 +231,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/brace-expansion@5.0.9",
+      "purl": "pkg:npm/brace-expansion@5.0.12",
       "externalReferences": [
         {
           "type": "vcs",
@@ -239,7 +239,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/brace-expansion@5.0.9",
+      "bom-ref": "pkg:npm/brace-expansion@5.0.12",
       "properties": [
         {
           "name": "SrcFile",
@@ -2619,7 +2619,7 @@
     {
       "group": "",
       "name": "undici",
-      "version": "7.29.0",
+      "version": "7.29.1",
       "description": "An HTTP/1.1 client, written from scratch for Node.js",
       "licenses": [
         {
@@ -2651,7 +2651,7 @@
           }
         }
       ],
-      "purl": "pkg:npm/undici@7.29.0",
+      "purl": "pkg:npm/undici@7.29.1",
       "externalReferences": [
         {
           "type": "website",
@@ -2663,7 +2663,7 @@
         }
       ],
       "type": "library",
-      "bom-ref": "pkg:npm/undici@7.29.0",
+      "bom-ref": "pkg:npm/undici@7.29.1",
       "properties": [
         {
           "name": "SrcFile",

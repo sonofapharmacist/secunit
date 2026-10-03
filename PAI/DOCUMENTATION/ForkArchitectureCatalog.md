@@ -16,7 +16,7 @@ Five enforcement points across the session lifecycle, six inspectors, fail-close
 |---|---|---|
 | UserPromptSubmit | `PromptGuard` | Heuristic injection/exfil/evasion screening, no LLM inference |
 | PreToolUse | `SecurityPipeline` | Inspector chain gates Bash/Write/Edit/MultiEdit/Read |
-| PostToolUse | `ContentScanner` | `InjectionInspector` on WebFetch/WebSearch results |
+| PostToolUse | `ContentScanner` | `InjectionInspector` on every tool's results (matcherless registration) |
 | PermissionRequest | `SmartApprover` | Trusted-workspace classification |
 | SessionStart | `CanarySession` + `HookCanary` | Plants session token; verifies the hook chain is live |
 
@@ -27,7 +27,7 @@ Five enforcement points across the session lifecycle, six inspectors, fail-close
 **What is genuinely new here:**
 - **The fail-closed correction.** Upstream `pipeline.ts` caught inspector exceptions, logged an `alert`, and called `continue` — proceeding with the tool call after skipping the failed layer. This fork returns `requireApproval(...)` instead. A skipped inspector is indistinguishable from a bypass; this is the substantive security fix in the subsystem and it was made against inherited code.
 - `CanaryInspector.ts` (107 lines) plus `CanarySession.hook.ts` and `HookCanary.hook.ts` — the session-canary subsystem is this fork's design. A per-session token planted at SessionStart and checked on every PreToolUse; appearance in a tool argument is a deterministic exfiltration signal, not a heuristic.
-- `ObserveGate` and `PhaseTransitionGuard` on Write/Edit — Algorithm phase ordering enforced at the tool layer, not by prompt.
+- `ObserveGate` and `PhaseTransitionGuard` on Write/Edit, enforced at the tool layer, not by prompt. Under Algorithm v8, `ObserveGate` blocks leaving `observe` without a Goal, a criterion and an `Anti:` criterion, and `PhaseTransitionGuard` blocks `phase: complete` while a passed criterion lacks verification evidence. Phase order is no longer enforced.
 
 The `new-subsystem-security-system` ADR originally claimed `SecurityPipeline.hook.ts` was "wholly written for this fork" and "did not exist at initial commit." Both were false; the ADR was corrected 2026-08-19 with a per-file provenance table.
 

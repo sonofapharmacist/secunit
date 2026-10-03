@@ -16,14 +16,18 @@
  *
  * Usage:
  *   bun ~/.claude/PAI/TOOLS/NightlyCodeReview.ts --repo ${HOME}/.claude --label pai-config
- *   bun ~/.claude/PAI/TOOLS/NightlyCodeReview.ts --resolve <finding-id>
+ *   bun ~/.claude/PAI/TOOLS/NightlyCodeReview.ts --set-status <finding-id> <status> [--reason ..] [--commit ..] [--of ..]
+ *   bun ~/.claude/PAI/TOOLS/NightlyCodeReview.ts --resolve <finding-id>   (legacy alias: sets status closed)
  */
 
 import { spawnSync } from "child_process"
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import { appendFileSync, mkdirSync, readFileSync } from "fs"
 import { dirname, join } from "path"
-import { randomUUID } from "crypto"
 import { runJailed } from "./AgyJail"
+import { inference } from "./Inference"
+import { appendCascadeRow, loadFloors, runCascade } from "./lib/cascade"
+import { prefilterCall, prefilterContract, type PrefilterResult } from "./lib/prefilter-cascade"
+import { alertsForRun, applyIncoming, CLOSED_STATUSES, isStatus, loadQueue, OPEN_STATUSES, priorFindingsFor, saveQueue, setStatus, type Finding, type Outcome, type ReviewAlert } from "./lib/review-queue"
 
 const HOME = process.env.HOME ?? ""
 const QUEUE_PATH = join(HOME, ".claude", "PAI", "MEMORY", "STATE", "code-review-queue.jsonl")
@@ -37,23 +41,23 @@ const INFERENCE_TOOL = join(HOME, ".claude", "PAI", "TOOLS", "Inference.ts")
 // validation outright. Mirrors Inference.ts's inferenceClaudeSubprocess() scrub — see that
 // file for the GLM/M3 fallback-mode exception rationale, not replicated here since this is a
 // non-interactive nightly job, not a shell session that could have sourced glm.sh/minimax.sh.
+//
+// 2026-09-29: PAI_AUTOMATED_SESSION marks the session as this job's, not GP's. The subprocess
+// loads user settings, so every hook runs; without the marker ImperativeExtractor stored this
+// file's review prompt as GP's standing rules and SatisfactionCapture rated it as GP's mood.
+// Guarded hooks skip; security hooks still run. See hooks/lib/automated-session.ts.
+// Pinned 2026-09-29. With no --model the subprocess inherited settings.json "model", which has
+// flipped between opus and sonnet with GP's /model choices (a62afb91 and 9881a162 set opus),
+// so the "Sonnet review" in this file's logs ran on whichever default was current that night.
+const REVIEW_MODEL = "sonnet"
+
 function claudeSubprocessEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }
   delete env.CLAUDECODE
   delete env.ANTHROPIC_API_KEY
   delete env.ANTHROPIC_AUTH_TOKEN
+  env.PAI_AUTOMATED_SESSION = "nightly-code-review"
   return env
-}
-
-interface Finding {
-  id: string
-  repo: string
-  severity: "high" | "medium" | "low"
-  file: string
-  line: number | null
-  description: string
-  created_at: string
-  resolved: boolean
 }
 
 /** Local's classification-shaped output: does this chunk touch security-relevant surface, and
@@ -61,19 +65,19 @@ interface Finding {
  * to produce findings (severity/file/line/description), only to route attention. This plays to
  * recall (bounded, mechanical presence/absence judgment) rather than significance-judgment
  * (local's weak axis, per the 7.9% confirm rate this inversion is fixing). */
-interface LocalFlagResult {
-  flag: boolean
-  reason: string
-}
+type LocalFlagResult = PrefilterResult
 
 /** A raw defect finding as produced by a real code-reviewing model (Sonnet, on a flagged chunk,
  * or the direct-Sonnet fallback pass) — the FINDINGS_SCHEMA shape. Named distinctly from the
- * queue's `Finding` (which adds id/repo/created_at/resolved via toFinding()). */
+ * queue's `Finding` (lib/review-queue.ts adds id, status, and seen counts when it applies
+ * a run). `matches` is the reviewer's claim that this repeats a prior finding; the queue
+ * validates it before acting on it. */
 interface RawFinding {
   severity: "high" | "medium" | "low"
   file: string
   line: number | null
   description: string
+  matches?: string | null
 }
 
 const FINDINGS_SCHEMA = {
@@ -88,6 +92,7 @@ const FINDINGS_SCHEMA = {
           file: { type: "string" },
           line: { type: ["number", "null"] },
           description: { type: "string" },
+          matches: { type: ["string", "null"] },
         },
         required: ["severity", "file", "description"],
       },
@@ -96,17 +101,6 @@ const FINDINGS_SCHEMA = {
   required: ["findings"],
 }
 
-/** Local's classification output schema — flag (bool) + one-line reason. Deliberately much
- * simpler than the old VALIDATION_SCHEMA it replaces: no severity, no file/line anchor, no
- * verdict enum — just "does this chunk plausibly touch security-relevant surface." */
-const CLASSIFICATION_SCHEMA = {
-  type: "object",
-  properties: {
-    flag: { type: "boolean" },
-    reason: { type: "string" },
-  },
-  required: ["flag", "reason"],
-}
 
 // Applied to every plain `git` spawnSync in this file — none of these normally take more than
 // a few hundred ms, so a hang means something is actually stuck (lock contention, network
@@ -166,14 +160,14 @@ function getDiffText(repoPath: string): string | null {
 }
 
 /** --full mode: diffs the whole tracked tree against the empty tree, ignoring commit history
- * entirely. For a one-off manual review of a repo with no recent commits (e.g. dinenasty,
+ * entirely. For a one-off manual review of a repo with no recent commits (e.g. a side-project repo,
  * last commit 4 days old) where the nightly 24h-window gate would otherwise skip it. */
 function getFullTreeDiff(repoPath: string): string | null {
   return runGitDiff(repoPath, EMPTY_TREE_HASH)
 }
 
 // Default spawnSync maxBuffer (~1MB) throws ENOBUFS on any repo diff larger than that — found
-// live 2026-07-06 on dinenasty's 3.1MB --full diff (84 files). ENOBUFS is a thrown error, not a
+// live 2026-07-06 on a side-project repo's 3.1MB --full diff (84 files). ENOBUFS is a thrown error, not a
 // non-zero exit status, so the old `diff.status === 0 ? diff.stdout : null` pattern never even
 // ran — it was caught by main()'s outer .catch() instead, several layers removed from the real
 // cause. Wrapping in try/catch here keeps the null-on-failure contract intact and preserves the
@@ -225,7 +219,7 @@ const OLLAMA_BASE_URL = fastTierBaseUrl()
 // while. Switched to the Tailscale IP (matches PAI_CONFIG.yaml ollama.base_url) since it doesn't
 // depend on LAN topology surviving future hardware changes; 2026-08-14's port move to the fast
 // tier (:11436) inherits that same Tailscale-IP reasoning.
-const OLLAMA_MODEL = "jackrong_v4_pro_qwen35_9b_mtp" // fast-tier classifier model; override with --local-model
+const OLLAMA_MODEL = "kat_coder_v25_apex" // fast-tier classifier model (KAT since 2026-09-29, was jackrong 9B); override with --local-model
 // Diffs are sent over HTTP (not argv) specifically to avoid E2BIG on large diffs, but the
 // model's own context/output budget is still finite (n_ctx 131072, ollama backend caps
 // completions at max_tokens 2048 per Inference.ts) — cap the diff text sent to the local
@@ -349,112 +343,19 @@ function chunkDiff(diffText: string, maxChunkChars: number, maxChunks: number): 
   return { chunks, skippedFiles }
 }
 
-/** Single HTTP call to the fast tier for one chunk's diff text. Returns null if the fast tier is
- * unreachable or returns a non-OK response — distinct from "classified, not flagged" (a real
- * `{flag: false}`), preserving ISC-35's local-failure-vs-genuinely-clean distinction under the
- * new classification contract (the old contract's "genuinely clean" was an empty findings array;
- * the new one's is a false flag — same shape of distinction, different payload).
- *
- * Prompt/contract change (2026-08-14 critic→pre-filter inversion): the old prompt asked local to
- * find and describe defects (severity/file/line/description) — a significance-judgment task,
- * local's weak axis per the 381/34/15 eval history. This prompt asks a single bounded yes/no
- * question instead — "does this chunk touch security-relevant surface" — a recall/classification
- * task the fast tier benched well on (15/17 reasoning battery). Response is a small JSON object,
- * not a findings array.
- *
- * reasoning_content handling: jackrong_v4_pro_qwen35_9b_mtp is thinking-capable and emits
- * `message.reasoning_content` alongside `message.content` even on trivial prompts (confirmed via
- * live curl probe against this exact model/endpoint before writing this parser — see the
- * task's verification evidence). `content` lands clean with only the final answer in both a
- * plain-text probe and a JSON-classification probe; `reasoning_content` is read into the type
- * below for documentation/future-debugging but deliberately never parsed for scoring — only
- * `content` feeds parseLocalClassification. */
-async function callLocalModel(repoPath: string, label: string, diffText: string, localModel?: string): Promise<LocalFlagResult | null> {
-  const systemPrompt =
-    "You are a fast triage classifier for a code review pipeline. You are NOT judging whether " +
-    "code is well-written or whether a change is a good idea — you are answering ONE bounded " +
-    "question: does this diff chunk touch security-relevant surface? " +
-    "Security-relevant surface means: authentication, authorization/permission checks, secrets " +
-    "or credential handling, input validation, injection-prone patterns (SQL/shell/command/path), " +
-    "network egress or new external calls, cryptography, or access-control logic. " +
-    "Plain content edits (docs, JSON data/knowledge files, comments, formatting, tag renames, " +
-    "prose rewording) are NOT security-relevant even if the wording changes meaning — flag=false. " +
-    "If genuinely unsure, prefer flag=true (this is a recall task — false positives cost a Sonnet " +
-    "read, false negatives skip review entirely). " +
-    "Respond with ONLY a JSON object, no prose, no markdown fences."
-
-  const userPrompt =
-    `CONTEXT\n  Repo: ${label} (${repoPath})\n\n` +
-    `THE DIFF (a portion of the last 24h of commits — other files are classified in separate calls)\n` +
-    `\`\`\`diff\n${diffText}\n\`\`\`\n\n` +
-    `Return strict JSON matching this shape:\n` +
-    `{"flag": true|false, "reason": "one sentence: what security-relevant surface (if any) this chunk touches, or why it doesn't"}`
-
-  let response: Response
-  try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 120_000)
-    response = await fetch(`${OLLAMA_BASE_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: localModel ?? OLLAMA_MODEL,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.2,
-        // 2026-08-14: found live during verification — jackrong_v4_pro_qwen35_9b_mtp burns a
-        // real reasoning_content trace BEFORE emitting content, and on a real ~37K-char chunk
-        // (16 files, PAI/TOOLS/*.py/.ts/.sh) a 1500-token budget hit finish_reason:"length" with
-        // 7213 chars of reasoning_content and an EMPTY content field — the classification never
-        // got written at all, only the scratch reasoning. This is the same class of gotcha
-        // documented for deepseek-v4-pro (see AnvilProgress.ts callers / KNOWLEDGE/Research/
-        // deepseek-v4-nous-research.md): thinking models need a generous budget or they return
-        // nothing. 4000 gives headroom for a multi-file chunk's reasoning trace plus the small
-        // JSON answer; parseLocalClassification's fail-toward-review default (flag=true) is the
-        // safety net if a chunk is complex enough to still exhaust even this budget.
-        max_tokens: 4000,
-        // Confirmed live against this exact endpoint (:11436) before wiring in: llama-server
-        // honors response_format/json_schema and returns a clean {"flag":...,"reason":...}
-        // object in `content`. Belt-and-suspenders with the defensive parseLocalClassification
-        // below (schema enforcement can still fail to apply if the backend/model combo changes).
-        response_format: {
-          type: "json_schema",
-          json_schema: { name: "classification", schema: CLASSIFICATION_SCHEMA },
-        },
-      }),
-      signal: controller.signal,
-    })
-    clearTimeout(timer)
-  } catch (err) {
-    console.error(`[NightlyCodeReview] ${label}: fast-tier your-inference-host (${OLLAMA_BASE_URL}) unreachable: ${err instanceof Error ? err.message : String(err)}`)
-    return null
-  }
-
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => "<no body>")
-    console.error(`[NightlyCodeReview] ${label}: fast-tier your-inference-host returned HTTP ${response.status}: ${errBody.slice(0, 500)}`)
-    return null
-  }
-
-  let content: string
-  try {
-    // reasoning_content is typed here but intentionally unread below — jackrong_v4_pro_qwen35_9b_mtp
-    // emits it alongside content on every call (confirmed via live probe), and the final
-    // classification answer lands cleanly in `content` alone. Do not fall back to
-    // reasoning_content if content parsing fails — that would silently score on the model's
-    // scratch reasoning instead of its stated answer.
-    const body = (await response.json()) as {
-      choices: Array<{ message: { content: string; reasoning_content?: string } }>
-    }
-    content = body.choices[0].message.content
-  } catch (err) {
-    console.error(`[NightlyCodeReview] ${label}: failed to parse fast-tier your-inference-host HTTP response: ${err instanceof Error ? err.message : String(err)}`)
-    return null
-  }
-
-  return parseLocalClassification(content, label)
+/** One chunk through the review-prefilter cascade (your-inference-host ISA F4, job 2/2): the fast tier
+ * first, Haiku when the local answer is unusable or the call fails, null only when both fail.
+ * null keeps ISC-35's meaning (no classification → Sonnet reviews the chunk). Before the
+ * cascade an unparseable local answer was silently defaulted to flag=true and never counted.
+ * History of the prompt and the reasoning_content gotcha: lib/prefilter-cascade.ts. */
+async function classifyChunk(repoPath: string, label: string, diffText: string, localModel: string): Promise<LocalFlagResult | null> {
+  const r = await runCascade(prefilterContract(localModel), { repoPath, label, diffText }, {
+    call: prefilterCall(OLLAMA_BASE_URL, inference),
+    floors: loadFloors(),
+    log: appendCascadeRow,
+  })
+  if (r.path !== "local") console.error(`[NightlyCodeReview] ${label}: pre-filter path ${r.path}: ${r.reasons.join("; ").slice(0, 300)}`)
+  return r.value ?? null
 }
 
 /** ISC-37: chunk-index tagging lives in this sidecar array, parallel to the flat classification
@@ -479,7 +380,7 @@ async function runLocalReview(repoPath: string, label: string, chunks: DiffChunk
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
     console.log(`[NightlyCodeReview] ${label}: local classify chunk ${i + 1}/${chunks.length} (${chunk.files.length} file(s): ${chunk.files.slice(0, 3).join(", ")}${chunk.files.length > 3 ? ", ..." : ""})`)
-    const classification = await callLocalModel(repoPath, label, chunk.text, localModel)
+    const classification = await classifyChunk(repoPath, label, chunk.text, localModel ?? OLLAMA_MODEL)
     if (classification === null) {
       console.error(`[NightlyCodeReview] ${label}: chunk ${i + 1}/${chunks.length} local call FAILED (not "not flagged" — the call itself did not succeed)`)
     }
@@ -488,37 +389,6 @@ async function runLocalReview(repoPath: string, label: string, chunks: DiffChunk
   return outcomes
 }
 
-/** Local models don't reliably honor the requested {"flag": ..., "reason": ...} shape exactly —
- * handle a bare boolean-ish field name drift ("flagged" instead of "flag") the same defensive
- * way the old parseLocalFindings handled "message" vs "description", rather than silently
- * dropping a real classification that arrived in a slightly different envelope. */
-function parseLocalClassification(content: string, label: string): LocalFlagResult {
-  const objectMatch = content.match(/\{[\s\S]*\}/)
-  const candidates = [objectMatch?.[0], content].filter((c): c is string => typeof c === "string")
-
-  for (const candidate of candidates) {
-    let raw: unknown
-    try {
-      raw = JSON.parse(candidate)
-    } catch {
-      continue
-    }
-    const obj = raw as Record<string, unknown>
-    const flagValue = obj.flag ?? obj.flagged
-    const reasonValue = typeof obj.reason === "string" ? obj.reason : null
-    if (typeof flagValue === "boolean" && reasonValue !== null) {
-      return { flag: flagValue, reason: reasonValue }
-    }
-  }
-
-  // Unparseable response: fail toward review, not away from it. This is a recall task — an
-  // unparseable classification is exactly the ISC-35 "local call effectively failed" case in
-  // spirit, but callLocalModel already returns null for transport/HTTP failures; a response that
-  // came back 200 OK but didn't parse to the expected shape gets flag=true here so the chunk
-  // still reaches Sonnet rather than silently falling through as "not flagged."
-  console.error(`[NightlyCodeReview] ${label}: failed to parse local classification (no candidate matched the expected shape), defaulting to flag=true (fail toward review)`)
-  return { flag: true, reason: "unparseable local classifier response — defaulted to flagged" }
-}
 
 /** Sonnet does real defect-finding review on ONE flagged chunk's diff text — this is no longer
  * validating someone else's candidate findings (there are none anymore; local only classified,
@@ -529,7 +399,24 @@ function parseLocalClassification(content: string, label: string): LocalFlagResu
  * VALIDATION_SCHEMA (removed). Prompt is piped via stdin (not argv) — diffs routinely exceed OS
  * ARG_MAX. `localReason` is the fast tier's one-line justification for flagging this chunk,
  * passed through as context — it's a routing signal, not something Sonnet needs to validate. */
-function reviewFlaggedChunk(repoPath: string, label: string, chunkText: string, localReason: string): RawFinding[] | null {
+/** Prior findings on the chunk's files, for the reviewer to match against. Repeat reports are
+ * paraphrased, so a text match can't tell "same bug, reworded" from "different bug"; the
+ * reviewer, looking at the code, can. Empty string when there's nothing to match. */
+function priorFindingsBlock(prior: Finding[]): string {
+  if (prior.length === 0) return ""
+  const lines = prior.map((f) => `- id=${f.id} status=${f.status} [${f.severity}] ${f.file}:${f.line ?? "?"}: ${f.description.slice(0, 300)}`)
+  return (
+    `PRIOR FINDINGS ON THESE FILES (from earlier nightly reviews):\n${lines.join("\n")}\n\n` +
+    `For each finding you report, set "matches" to the id of the prior finding above that ` +
+    `describes the SAME underlying defect (same root cause, even if the wording, line number, or ` +
+    `example differs), or null if it is a different defect. Do not match two defects just because ` +
+    `they are in the same file or area. Still report a defect that matches a prior finding: that ` +
+    `is how the queue learns it is still present. Do not report a prior finding that this diff no ` +
+    `longer shows.\n\n`
+  )
+}
+
+function reviewFlaggedChunk(repoPath: string, label: string, chunkText: string, localReason: string, prior: Finding[]): RawFinding[] | null {
   const truncated = chunkText.length > MAX_DIFF_CHARS_FOR_SONNET_VALIDATION
   const boundedDiff = truncated ? chunkText.slice(0, MAX_DIFF_CHARS_FOR_SONNET_VALIDATION) : chunkText
 
@@ -556,14 +443,15 @@ function reviewFlaggedChunk(repoPath: string, label: string, chunkText: string, 
     `with a file:line anchor from the diff text itself. DO NOT FABRICATE findings, function ` +
     `names, or behavior not visible in the diff. If you find nothing real, return an empty ` +
     `findings array — do not invent findings to fill space.\n\n` +
+    priorFindingsBlock(prior) +
     `Return findings as strict JSON matching this shape:\n` +
-    `{"findings": [{"severity": "high|medium|low", "file": "path", "line": number|null, "description": "1-2 sentence defect description with file:line anchor"}]}`
+    `{"findings": [{"severity": "high|medium|low", "file": "path", "line": number|null, "description": "1-2 sentence defect description with file:line anchor", "matches": "prior id or null"}]}`
 
   let result: ReturnType<typeof spawnSync>
   try {
     result = spawnSync(
       "claude",
-      ["-p", "--output-format", "json", "--json-schema", JSON.stringify(FINDINGS_SCHEMA), "--permission-mode", "default"],
+      ["-p", "--model", REVIEW_MODEL, "--output-format", "json", "--json-schema", JSON.stringify(FINDINGS_SCHEMA), "--permission-mode", "default"],
       { cwd: repoPath, encoding: "utf-8", stdio: "pipe", timeout: 300_000, input: prompt, maxBuffer: GIT_DIFF_MAX_BUFFER, env: claudeSubprocessEnv() }
     )
   } catch (err) {
@@ -621,7 +509,8 @@ Report only defects you can justify from the diff shown, anchored to a file and 
 
 Answer directly in your reply text. Do not use any tools, files, commands, or browsing.
 Respond with ONLY a JSON object, no prose, no markdown fences:
-{"findings": [{"severity": "high|medium|low", "file": "<path from the diff header>", "line": <number or null>, "description": "<what goes wrong, under what conditions, and why>"}]}`
+{"findings": [{"severity": "high|medium|low", "file": "<path from the diff header>", "line": <number or null>, "description": "<what goes wrong, under what conditions, and why>", "matches": "<prior finding id, or null>"}]}
+Set "matches" only when a PRIOR FINDINGS list is given below and one of them is the same underlying defect; otherwise null.`
 
 function parseFlashFindings(text: string): RawFinding[] | null {
   const m = text.match(/\{[\s\S]*\}/)
@@ -638,12 +527,13 @@ function parseFlashFindings(text: string): RawFinding[] | null {
       file: typeof f.file === "string" ? f.file : "",
       line: typeof f.line === "number" ? f.line : null,
       description: f.description.trim(),
+      matches: typeof f.matches === "string" ? f.matches : null,
     }))
 }
 
 /** null = no review happened for this chunk (quota, timeout, tool-use violation, unparseable). */
-async function reviewChunkWithFlash(label: string, chunk: DiffChunk, idx: number, total: number): Promise<RawFinding[] | null> {
-  const prompt = `${FLASH_REVIEW_SYSTEM}\n\n# Diff (repo: ${label}, chunk ${idx + 1}/${total})\n\n\`\`\`diff\n${chunk.text}\n\`\`\``
+async function reviewChunkWithFlash(label: string, chunk: DiffChunk, idx: number, total: number, prior: Finding[]): Promise<RawFinding[] | null> {
+  const prompt = `${FLASH_REVIEW_SYSTEM}\n\n${priorFindingsBlock(prior)}# Diff (repo: ${label}, chunk ${idx + 1}/${total})\n\n\`\`\`diff\n${chunk.text}\n\`\`\``
   const r = await runJailed(prompt, { model: FLASH_REVIEW_MODEL, timeoutSec: 300 })
   if (r.violation) {
     console.error(`[NightlyCodeReview] ${label}: chunk ${idx + 1}/${total}: Flash attempted tools [${r.tool_calls.join(", ")}] (session ${r.session}) — chunk NOT reviewed`)
@@ -658,30 +548,17 @@ async function reviewChunkWithFlash(label: string, chunk: DiffChunk, idx: number
   return findings
 }
 
-async function reviewAllChunksWithFlash(label: string, chunks: DiffChunk[]): Promise<{ findings: Finding[]; reviewed: number }> {
-  const out: Finding[] = []
+async function reviewAllChunksWithFlash(label: string, chunks: DiffChunk[], queue: Finding[]): Promise<{ findings: RawFinding[]; reviewed: number }> {
+  const out: RawFinding[] = []
   let reviewed = 0
   for (let i = 0; i < chunks.length; i++) {
     console.log(`[NightlyCodeReview] ${label}: reviewing chunk ${i + 1}/${chunks.length} with jailed Flash (${chunks[i].files.length} file(s))`)
-    const raw = await reviewChunkWithFlash(label, chunks[i], i, chunks.length)
+    const raw = await reviewChunkWithFlash(label, chunks[i], i, chunks.length, priorFindingsFor(queue, label, chunks[i].files))
     if (raw === null) continue
     reviewed++
-    for (const f of raw) out.push(toFinding({ ...f, file: attributeFile(f.file, chunks[i].files, i) }, label))
+    for (const f of raw) out.push({ ...f, file: attributeFile(f.file, chunks[i].files, i) })
   }
   return { findings: out, reviewed }
-}
-
-function toFinding(f: RawFinding, label: string, severityOverride?: "high" | "medium" | "low"): Finding {
-  return {
-    id: randomUUID(),
-    repo: label,
-    severity: severityOverride ?? f.severity,
-    file: f.file,
-    line: f.line ?? null,
-    description: f.description,
-    created_at: new Date().toISOString(),
-    resolved: false,
-  }
 }
 
 /** ISC-39: a finding whose `file` doesn't match any file actually present in its source chunk
@@ -727,12 +604,13 @@ function reviewChunks(
   label: string,
   chunks: DiffChunk[],
   outcomes: LocalReviewOutcome[],
-  dryRun: boolean
-): { confirmed: Finding[] } {
+  dryRun: boolean,
+  queue: Finding[]
+): { confirmed: RawFinding[] } {
   const flagged = selectFlaggedChunks(outcomes)
   console.log(`[NightlyCodeReview] ${label}: ${outcomes.length} chunk(s) classified locally, ${flagged.size} flagged for Sonnet review (security-relevant-surface flags plus any failed-local chunks)`)
 
-  const confirmed: Finding[] = []
+  const confirmed: RawFinding[] = []
 
   for (const outcome of outcomes) {
     const chunk = chunks[outcome.chunkIndex]
@@ -748,7 +626,7 @@ function reviewChunks(
 
     const reasonForLog = outcome.classification?.reason ?? "local call FAILED for this chunk — Sonnet is the sole reviewer"
     console.log(`[NightlyCodeReview] ${label}: reviewing chunk ${outcome.chunkIndex + 1}/${chunks.length} with Sonnet (reason: ${reasonForLog})`)
-    const findings = reviewFlaggedChunk(repoPath, label, chunk.text, reasonForLog)
+    const findings = reviewFlaggedChunk(repoPath, label, chunk.text, reasonForLog, priorFindingsFor(queue, label, chunk.files))
 
     if (findings === null) {
       // Both local (maybe) and Sonnet failed for this chunk — genuinely zero review coverage
@@ -764,7 +642,7 @@ function reviewChunks(
 
     for (const f of findings) {
       const attributedFile = attributeFile(f.file, chunk.files, outcome.chunkIndex)
-      confirmed.push(toFinding({ ...f, file: attributedFile }, label))
+      confirmed.push({ ...f, file: attributedFile })
     }
   }
 
@@ -807,12 +685,16 @@ function appendEvalRow(
   appendFileSync(EVAL_PATH, JSON.stringify(row) + "\n")
 }
 
-function runReview(repoPath: string, label: string): Finding[] {
+/** Whole-repo fallback (`/code-review high`) when the chunked path can't run. It gets no prior
+ * findings, so everything it reports is `new`; a repeat shows up as a duplicate to triage. */
+function runReview(repoPath: string, label: string): RawFinding[] {
   const result = spawnSync(
     "claude",
     [
       "-p",
       "/code-review high",
+      "--model",
+      REVIEW_MODEL,
       "--output-format",
       "json",
       "--json-schema",
@@ -849,41 +731,81 @@ function runReview(repoPath: string, label: string): Finding[] {
   }
 
   return parsed.findings.map((f) => ({
-    id: randomUUID(),
-    repo: label,
-    severity: f.severity as Finding["severity"],
+    severity: f.severity as RawFinding["severity"],
     file: f.file,
     line: f.line ?? null,
     description: f.description,
-    created_at: new Date().toISOString(),
-    resolved: false,
   }))
 }
 
-function appendFindings(findings: Finding[], dryRun = false): void {
+/** Applies a run's findings to the queue: new rows, recurring bumps, resurfaced rows, or
+ * suppression of repeats GP already closed as false_positive/risk_accepted.
+ * `dryRun` is required on purpose: with a default, the your-inference-host-down fallback path called this
+ * without it and a --dry-run wrote to the real queue (review finding 8a78021c, 2026-07-09). */
+async function appendFindings(findings: RawFinding[], label: string, dryRun: boolean): Promise<void> {
+  const queue = loadQueue(QUEUE_PATH)
+  const { queue: next, outcomes } = applyIncoming(queue, label, findings, new Date().toISOString())
+  const tally = (k: Outcome["kind"]) => outcomes.filter((o) => o.kind === k).length
+  console.log(`[NightlyCodeReview] ${label}: ${findings.length} finding(s) → ${tally("new")} new, ${tally("recurring")} recurring, ${tally("resurfaced")} resurfaced, ${tally("suppressed")} suppressed (already closed as false_positive/risk_accepted)`)
+  // Each suppressed report by name: the match was the reviewer's claim about an untrusted diff,
+  // so a wrong or steered one has to be readable here, not just a count (finding 53c26d94).
+  for (const o of outcomes) if (o.kind === "suppressed") console.log(`  suppressed → ${o.id.slice(0, 8)} (${o.status}): ${o.description}`)
   if (dryRun) {
-    console.log(`[NightlyCodeReview] DRY-RUN: would have appended ${findings.length} findings to ${QUEUE_PATH}`)
-    for (const f of findings) console.log(`  [${f.severity}] ${f.file}:${f.line ?? "?"} — ${f.description}`)
+    console.log(`[NightlyCodeReview] DRY-RUN: queue not written (${QUEUE_PATH})`)
+    for (const [i, f] of findings.entries()) console.log(`  [${f.severity}] ${outcomes[i].kind}${f.matches ? ` (matches ${f.matches.slice(0, 8)})` : ""} ${f.file}:${f.line ?? "?"} — ${f.description}`)
     return
   }
-  if (findings.length === 0) return
-  mkdirSync(dirname(QUEUE_PATH), { recursive: true })
-  const lines = findings.map((f) => JSON.stringify(f)).join("\n") + "\n"
-  appendFileSync(QUEUE_PATH, lines)
+  if (outcomes.length > 0) {
+    mkdirSync(dirname(QUEUE_PATH), { recursive: true })
+    saveQueue(QUEUE_PATH, next)
+  }
+  // After the queue write, so an alert never points at a row that isn't there.
+  await notifyRun(alertsForRun(label, findings, outcomes))
 }
 
-function resolveFinding(id: string): void {
-  if (!existsSync(QUEUE_PATH)) {
-    console.error("[NightlyCodeReview] queue file does not exist")
-    return
+/** Best-effort: Pulse down must not fail the review. Awaited, since the CLI exits next. */
+async function notifyRun(alerts: ReviewAlert[]): Promise<void> {
+  for (const a of alerts) {
+    try {
+      await fetch("http://localhost:31337/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(a),
+        signal: AbortSignal.timeout(3000),
+      })
+    } catch (err) {
+      console.error(`[NightlyCodeReview] notify failed (${a.severity} ${a.id}): ${err instanceof Error ? err.message : err}`)
+    }
   }
-  const lines = readFileSync(QUEUE_PATH, "utf-8").trim().split("\n").filter(Boolean)
-  const updated = lines.map((line) => {
-    const finding: Finding = JSON.parse(line)
-    if (finding.id === id) finding.resolved = true
-    return JSON.stringify(finding)
-  })
-  writeFileSync(QUEUE_PATH, updated.join("\n") + "\n")
+}
+
+const STATUS_USAGE = `bun NightlyCodeReview.ts --set-status <finding-id> <status> [--reason "..."] [--commit <sha>] [--of <finding-id>] [--by <name>] [--dry-run]
+  open:   ${OPEN_STATUSES.join(", ")}
+  closed: ${CLOSED_STATUSES.join(", ")}
+  risk_accepted and false_positive need --reason; duplicate needs --of. Ids may be an 8+ char prefix.`
+
+/** `dryRun` is required: the status commands returned before --dry-run was parsed, so a
+ * dry-run --resolve wrote to the real queue (finding e9746b52, 2026-09-30). */
+function setFindingStatus(args: string[], idx: number, dryRun: boolean): void {
+  const id = args[idx + 1]
+  const status = args[idx + 2]
+  if (!id || !status || id.startsWith("--") || !isStatus(status)) {
+    console.error(`Usage: ${STATUS_USAGE}`)
+    process.exit(1)
+  }
+  const opt = (name: string) => (args.indexOf(name) !== -1 ? requireFlagValue(args, args.indexOf(name), name) : undefined)
+  try {
+    const next = setStatus(loadQueue(QUEUE_PATH), id, status, { by: opt("--by") ?? "manual", reason: opt("--reason"), commit: opt("--commit"), of: opt("--of") }, new Date().toISOString())
+    if (dryRun) {
+      console.log(`[NightlyCodeReview] DRY-RUN: ${id} would go → ${status}; queue not written (${QUEUE_PATH})`)
+      return
+    }
+    saveQueue(QUEUE_PATH, next)
+    console.log(`[NightlyCodeReview] ${id} → ${status}`)
+  } catch (err) {
+    console.error(`[NightlyCodeReview] ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
 }
 
 // A flag's value slot is missing (undefined) or actually holds another flag (e.g.
@@ -901,17 +823,24 @@ function requireFlagValue(args: string[], flagIdx: number, flagName: string): st
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
+  const dryRun = args.includes("--dry-run")
 
   const resolveIdx = args.indexOf("--resolve")
   if (resolveIdx !== -1) {
-    resolveFinding(requireFlagValue(args, resolveIdx, "--resolve"))
+    // Legacy alias. It never said how a finding was resolved, so it records `closed`, not `fixed`.
+    setFindingStatus(["--set-status", requireFlagValue(args, resolveIdx, "--resolve"), "closed", ...args.filter((_, i) => i !== resolveIdx && i !== resolveIdx + 1)], 0, dryRun)
+    return
+  }
+
+  const setStatusIdx = args.indexOf("--set-status")
+  if (setStatusIdx !== -1) {
+    setFindingStatus(args, setStatusIdx, dryRun)
     return
   }
 
   const repoIdx = args.indexOf("--repo")
   const labelIdx = args.indexOf("--label")
   const full = args.includes("--full")
-  const dryRun = args.includes("--dry-run")
   const localModelIdx = args.indexOf("--local-model")
   const reviewerIdx = args.indexOf("--reviewer")
   const reviewer = reviewerIdx !== -1 ? requireFlagValue(args, reviewerIdx, "--reviewer") : "sonnet"
@@ -957,17 +886,17 @@ async function main(): Promise<void> {
   }
 
   if (reviewer === "flash") {
-    const { findings, reviewed } = await reviewAllChunksWithFlash(label, chunks)
+    const { findings, reviewed } = await reviewAllChunksWithFlash(label, chunks, loadQueue(QUEUE_PATH))
     if (reviewed === 0) {
       // Every chunk failed (agy quota, outage): fall back to the direct Sonnet pass rather than
       // report a silent zero as a clean night.
       console.error(`[NightlyCodeReview] ${label}: Flash review failed for ALL ${chunks.length} chunk(s), falling back to direct Sonnet review`)
       const fb = runReview(repoPath, label)
-      appendFindings(fb, dryRun)
+      await appendFindings(fb, label, dryRun)
       console.log(`[NightlyCodeReview] ${label}: ${fb.length} findings ${dryRun ? "would be written" : "written"} (Sonnet fallback path)`)
       return
     }
-    appendFindings(findings, dryRun)
+    await appendFindings(findings, label, dryRun)
     const missed = chunks.length - reviewed
     console.log(`[NightlyCodeReview] ${label}: ${findings.length} findings ${dryRun ? "would be written" : "written"} (jailed Flash review of ${reviewed}/${chunks.length} chunk(s)${missed ? `, ${missed} chunk(s) NOT reviewed — see errors above` : ""})`)
     if (missed) process.exitCode = 1
@@ -984,7 +913,7 @@ async function main(): Promise<void> {
     if (findings.length === 0) {
       console.error(`[NightlyCodeReview] ${label}: FALLBACK REVIEW PRODUCED NO FINDINGS — verify this is a genuinely clean diff, not a second failure (check stderr above for a runReview error)`)
     }
-    appendFindings(findings)
+    await appendFindings(findings, label, dryRun)
     console.log(`[NightlyCodeReview] ${label}: ${findings.length} findings written (fallback path)`)
     return
   }
@@ -996,9 +925,9 @@ async function main(): Promise<void> {
   // PreFilterReview: Sonnet reviews only flagged (or failed-local) chunks directly for real
   // defects — no confirm/reject/downgrade merge step anymore, Sonnet's own findings on the
   // flagged subset ARE the result.
-  const { confirmed } = reviewChunks(repoPath, label, chunks, outcomes, dryRun)
+  const { confirmed } = reviewChunks(repoPath, label, chunks, outcomes, dryRun, loadQueue(QUEUE_PATH))
 
-  appendFindings(confirmed, dryRun)
+  await appendFindings(confirmed, label, dryRun)
   console.log(`[NightlyCodeReview] ${label}: ${confirmed.length} findings ${dryRun ? "would be written" : "written"} (from Sonnet review of ${flaggedCount + failedCount} flagged/failed-local chunk(s) out of ${outcomes.length} total)`)
 }
 

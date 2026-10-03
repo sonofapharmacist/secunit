@@ -27,7 +27,6 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
 
 const PAI_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude');
 
@@ -410,16 +409,14 @@ function addMilestone(description: string, dryRun: boolean): boolean {
 function sendNotification(message: string): void {
   console.log(`[Notification] ${message}`);
 
-  // Use ntfy if available
-  try {
-    const topic = process.env.NTFY_TOPIC;
-    if (topic) {
-      execSync(`curl -s -d "${message}" ntfy.sh/${topic} 2>/dev/null || true`, {
-        stdio: 'ignore',
-        timeout: 3000
-      });
-    }
-  } catch {}
+  // Route through Pulse /notify: severity routing and redaction live there.
+  // (Was a direct curl to public ntfy.sh with the message in a shell string.)
+  fetch('http://localhost:31337/notify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Relationship reflection', message, severity: 'P2', source: 'relationship-reflect' }),
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => {});
 }
 
 /**

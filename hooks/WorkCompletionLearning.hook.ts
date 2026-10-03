@@ -54,6 +54,7 @@ import { join, dirname } from 'path';
 import { getISOTimestamp, getPSTDate } from './lib/time';
 import { getLearningCategory } from './lib/learning-utils';
 import { findArtifactPath } from './lib/isa-utils';
+import { exitIfAutomated } from './lib/automated-session';
 
 const BASE_DIR = process.env.PAI_DIR || join(process.env.HOME!, '.claude', 'PAI');
 const MEMORY_DIR = join(BASE_DIR, 'MEMORY');
@@ -257,6 +258,7 @@ ${idealContent || 'Not specified'}
 }
 
 async function main() {
+  exitIfAutomated('WorkCompletionLearning');
   try {
     // Read input from stdin with timeout — SessionEnd hooks may receive
     // empty or slow stdin. Proceed regardless since state is read from disk.

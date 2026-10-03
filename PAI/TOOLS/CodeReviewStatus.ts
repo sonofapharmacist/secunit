@@ -14,7 +14,12 @@
  *   bun PAI/TOOLS/CodeReviewStatus.ts --repo pai-config
  */
 
+import { join } from "path"
+import { loadQueue } from "./lib/review-queue"
+
 const PULSE_BASE = process.env.PULSE_URL ?? "http://localhost:31337"
+const QUEUE_PATH = join(process.env.HOME ?? "", ".claude", "PAI", "MEMORY", "STATE", "code-review-queue.jsonl")
+const SUPPRESSED_WINDOW_DAYS = 7
 
 interface Finding {
   id: string
@@ -25,6 +30,9 @@ interface Finding {
   description: string
   created_at: string
   resolved: boolean
+  /** Absent only if Pulse is still running a pre-2026-09-29 code-review module. */
+  status?: string
+  times_seen?: number
 }
 
 interface JobHealth {
@@ -85,16 +93,39 @@ async function main(): Promise<void> {
   const bySeverity = { high: 0, medium: 0, low: 0 }
   for (const f of findings) bySeverity[f.severity]++
 
-  console.log(`\nUnresolved findings: ${findings.length} (high: ${bySeverity.high}, medium: ${bySeverity.medium}, low: ${bySeverity.low})`)
+  console.log(`\nOpen findings: ${findings.length} (high: ${bySeverity.high}, medium: ${bySeverity.medium}, low: ${bySeverity.low})`)
+  try {
+    const res = await fetch(`${PULSE_BASE}/api/code-review/summary`)
+    if (res.ok) {
+      const { total, byRepo } = (await res.json()) as { total: Record<string, number>; byRepo: Record<string, Record<string, number>> }
+      const counts = repoFilter ? byRepo[repoFilter] ?? {} : total
+      console.log(`By status:     ${Object.entries(counts).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(", ")}`)
+    }
+  } catch { /* summary is optional: older Pulse modules lack the route */ }
 
   if (findings.length > 0) {
     console.log()
     for (const f of findings.slice(0, 10)) {
       const loc = f.line !== null ? `${f.file}:${f.line}` : f.file
-      console.log(`  [${f.severity}] ${f.repo} ${loc}`)
+      const seen = f.times_seen && f.times_seen > 1 ? ` ×${f.times_seen}` : ""
+      console.log(`  [${f.severity}] [${f.status ?? "?"}${seen}] ${f.repo} ${loc}  (${f.id.slice(0, 8)})`)
       console.log(`    ${f.description}`)
     }
     if (findings.length > 10) console.log(`  ... and ${findings.length - 10} more`)
+  }
+
+  // Reports the reviewer matched to a false_positive/risk_accepted finding. The match is its
+  // claim about an untrusted diff, so show the reports themselves (finding 53c26d94).
+  const since = new Date(Date.now() - SUPPRESSED_WINDOW_DAYS * 86_400_000).toISOString()
+  const suppressed = loadQueue(QUEUE_PATH)
+    .filter((f) => !repoFilter || f.repo === repoFilter)
+    .flatMap((f) => (f.suppressed_reports ?? []).filter((r) => r.at >= since).map((r) => ({ f, r })))
+  if (suppressed.length > 0) {
+    console.log(`\nSuppressed in the last ${SUPPRESSED_WINDOW_DAYS} days (matched to a dismissed finding; check the match is right):`)
+    for (const { f, r } of suppressed) {
+      console.log(`  [${r.severity}] → ${f.id.slice(0, 8)} (${f.status}) ${f.repo} ${f.file}:${r.line ?? "?"}`)
+      console.log(`    ${r.description}`)
+    }
   }
 }
 

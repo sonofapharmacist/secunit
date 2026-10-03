@@ -6,56 +6,56 @@
 
 ## What's different from upstream
 
-The headline: **Algorithm v7.1.0 vs upstream's v6.3.0.**
+The headline: **Algorithm v8.0.0 vs upstream's v6.3.0.**
 
-The Algorithm is PAI's structured task-execution framework — five ordered phases (OBSERVE →
-THINK → PLAN → EXECUTE → VERIFY) with effort tiers (E1–E5) that scale ceremony to task
-complexity.
+The Algorithm is PAI's task-execution doctrine: every piece of work moves a current state to an
+ideal state, and "done" is proven with tool evidence, not asserted. Through v7 it was a
+729-line prompt of ordered phases (OBSERVE → THINK → PLAN → BUILD → EXECUTE → VERIFY → LEARN),
+effort tiers (E1–E5) with thinking and criteria floors, and a fixed output format.
 
-v7.0.0 is a reliability release targeting documented failure modes with evidence. Internal
-observability logged 146 failure events in May 2026, an 8.59% fail-safe rate above the 5%
-tripwire, and self-reported compliance on sessions where violations were caught after the fact.
-Jaroslawicz 2025 (arXiv 2507.11538) establishes a 68% compliance ceiling under high instruction
-density; this fork is built around that finding.
+v8.0.0 is 119 lines. The reason is evidence, not taste: since the Claude 5 family the executing
+model near-totally ignored the prompted routing and ceremony. Jaroslawicz 2025 (arXiv
+2507.11538) puts a 68% compliance ceiling on high instruction density, and the v7 prompt was
+well past it. A first draft that cut the doctrine went to seven models across six vendor
+families; six of seven pushed back that a model ignoring the spec means enforcement is broken,
+not that the ideas are obsolete. So v8 keeps the doctrine, moves enforcement into hooks, and
+deletes the choreography. Decision record: `DOCUMENTATION/Decisions/algorithm-v8-harness-first.md`.
 
-**Six coordinated changes in v7.0.0:**
+**Kept as doctrine:**
 
-1. **Fail-safe routing:** classifier errors route to E2 (extended effort), not E3 (advanced effort). Was injecting maximum ceremony
-   on 8.59% of turns.
-2. **Tier floor reductions:** E3 thinking floor ≥4→≥1 (four-count forced phantom label
-   compliance, not genuine thinking); E3 ISC (Ideal State Criteria — the per-task verification checklist) floor ≥32→≥16.
-3. **Ceremony elimination:** EUPHORIC SURPRISE PREDICTION removed (Class B hallucination
-   surface with no verification path); DELIVERABLE MANIFEST deferred to E4/E5; voice curl
-   removed from mandatory phase transitions (failed silently on headless systems).
-4. **Primacy repositioning:** three most-violated CLAUDE.md rules moved to top 30 lines.
-   Primacy effect means earlier rules survive instruction density degradation; mid-document
-   rules drop first under load.
-5. **Compliance observability:** `violations_self_reported` field mandatory in
-   algorithm-reflections.jsonl (the per-session Algorithm execution log). `within_budget: true`
-   alone is no longer sufficient.
-6. **Execution pattern:** chunked E2 sessions with a compaction between each. Shorter sessions,
-   less context accumulation, more reliable execution.
+1. **Criteria only when "done" has a nameable probe.** If you can name the tool call that proves
+   the work is finished, write ISC (Ideal State Criteria, the per-task verification checklist);
+   if you can't, the project's notes are the record. Each criterion must be one binary tool
+   probe, with at least one `Anti:` criterion. IDs never re-number.
+2. **Verification evidence in the same tool block** that claims a pass, with a probe table per
+   artifact type and a forbidden-language list ("should work", "done" without evidence).
+3. **Reproduce first** for reported bugs, with an explicit, logged skip when reproduction is
+   unsafe or impossible.
+4. **Scope as one `## Decisions` entry** (what changes, how it could be wrong, what's excluded,
+   what evidence will show it worked) instead of a visible gate block.
+5. **Advisor and cross-vendor audit (Cato) on high-stakes work**, with "high-stakes" defined by
+   a probe: the change touches `CLAUDE.md`, the Algorithm, `hooks/`, `settings.json`, or
+   content leaving the tree.
 
-**Three coordinated changes in v7.1.0:**
+**Moved into hooks** (gated on `ALGORITHM/LATEST` ≥ 8, so writing `7.1.1` there rolls back):
+an observe gate on criteria readiness, a verify lint that blocks `phase: complete` on unevidenced
+passes, resume-time scope questions, and a one-line completion breadcrumb in place of the
+model-written reflection row.
 
-1. **Stub surface, silent internals:** ISA state surfaces as a one-line stub entry in Algorithm
-   context; the full ISA is read directly at OBSERVE. No AI narration of current phase or
-   progress — narrated status embeds fabrications as ground truth. The Read is authoritative.
-2. **Architecture Decision Records:** `ArchitectureSummaryGenerator.ts` detects structural
-   threshold changes — algorithm version bumps, new subsystems, new pipeline domains — and
-   writes a stub ADR to `DOCUMENTATION/Decisions/`. Stubs block release: `release.ts` exits 1
-   if any `status: stub` ADRs exist. The reasoning behind architectural choices lives in the
-   repository alongside the code.
-3. **Architecture knowledge domain:** ADRs are BM25-indexed and surface automatically during
-   OBSERVE via MemoryRetriever. Architecture decisions inform execution without requiring manual
-   context loading.
+**Deleted from the prompt:** E1–E5 thinking and delegation floors, ISC count floors, phase
+headers and narration, the capability-name audit, and the closing-format block. Effort tiers
+survive only as routing and time budget. Cheaper executing models get extra one-line scaffolds
+injected per model class (`ALGORITHM/model-scaffolds.yaml`); the rest is on demand in
+`ALGORITHM/on-demand.md`.
+
+v7.0.0 and v7.1.x stay on disk for reference. Two v7 changes carry forward: the fail-safe rate
+tripwire (below) and Architecture Decision Records that block release while stubbed.
 
 **The CLAUDE.md operational ruleset** (Claude Code's project-level instruction file) is the other major differentiator. 40+ rules traceable
-to specific incidents — a record of failures, not a promise of compliance. Scope gate (pre-execution
-check confirming what's being built and how success is measured), sentinel file pattern, Forge
-(GPT-based coding subagent) auto-include at E3/E4/E5, spawnSync stdio pipe, multi-site TypeScript param
-discipline: institutional knowledge that isn't in the upstream documentation because it comes
-from issues, not design.
+to specific incidents — a record of failures, not a promise of compliance. The scope entry,
+sentinel file pattern, spawnSync stdio pipe, multi-site TypeScript param discipline,
+fail-closed security hooks: institutional knowledge that isn't in the upstream documentation
+because it comes from issues, not design.
 
 **Security orientation.** RedTeam, WorldThreatModel, and a security architecture library
 (Kohnfelder framework, STRIDE/DREAD/CIA, threat modeling patterns) reflect a security
@@ -79,13 +79,13 @@ classification, tool activity, failures, and satisfaction signals are logged as 
   tool call arguments before they leave the system — not after.
 - **RulesInspector:** policy enforcement via LLM evaluation of natural language rules in SECURITY_RULES.md (inert when that file is absent or empty; fails closed on unparseable or unexpected responses)
 
-Write and Edit additionally pass through **ObserveGate** (blocks file writes if the OBSERVE
-phase hasn't been committed as a sentinel; enforces that analysis precedes action) and
-**PhaseTransitionGuard** (enforces Algorithm phase ordering at the tool call level).
+Write and Edit additionally pass through **ObserveGate** (under Algorithm v8, blocks an ISA from
+leaving `observe` until it has a Goal, at least one criterion, and an `Anti:` criterion) and
+**PhaseTransitionGuard** (under Algorithm v8, refuses `phase: complete` while any passed criterion lacks quoted verification evidence, rather than enforcing phase ordering).
 
 **Output gates (PostToolUse).** External content gets its own inspector: `ContentScanner.hook.ts`
-runs InjectionInspector on every WebFetch and WebSearch result before it lands in the conversation.
-Web content is screened for prompt injection attempts on the way in. All tool I/O passes through
+runs InjectionInspector on every tool's output (registered matcherless, so the WebFetch and WebSearch matchers are redundant) before it lands in the conversation.
+Tool output is screened for prompt injection attempts on the way in. All tool I/O passes through
 `ToolActivityTracker` asynchronously; every call and result logged to `MEMORY/OBSERVABILITY/`.
 
 **Stop gate.** `DocIntegrity.hook.ts` fires before the final response goes out, running
@@ -130,7 +130,7 @@ DA, and skill execution all run on Claude; that requires the Anthropic API, or a
 model behind an OpenAI-compatible endpoint (e.g., a self-hosted Qwen3-235B or similar). Local
 models handle sub-tasks at specific tiers; they are workers, not the main brain.
 
-- **`inference-routing.yaml`:** manifest mapping model names to tiers (fast/standard/smart);
+- **`inference-routing.yaml`:** manifest mapping model names to tiers (fast/standard/smart, plus the API-direct fable tier);
   ships with example configs; populate latencies from your own `BenchmarkLocalModels.ts` run.
 - **`skill-routing.yaml`:** per-skill routing overrides; specific skills can demand specific
   backends
@@ -203,7 +203,9 @@ sourcing before you start relying on the new backend.
 ## Pulse autopilot code review
 
 Pulse (the always-on companion process) can run a nightly, report-only code review against
-configured repos: `/code-review high` via a headless `claude -p` call, findings written to a
+configured repos. `NightlyCodeReview.ts` runs as a Pulse script job: a local model flags the diff
+chunks that touch security-relevant code, Sonnet (a headless `claude -p` call) reviews only those
+chunks, and a whole-repo `/code-review high` pass is the fallback. Findings are written to a
 JSONL queue, served over HTTP through a Pulse module. It never auto-fixes — it surfaces
 findings for you to triage in the morning, the same way you'd review a teammate's overnight
 PR comments. Configure repos and schedule in `PULSE.toml`.
@@ -298,7 +300,7 @@ Neither is required. Both extend the same surface secunit already builds on.
 
 ---
 
-## Skills (46 public)
+## Skills (45 public)
 
 Skills are composable domain units that self-activate based on task triggers — PAI's way of
 extending Claude's capabilities without bloating the system prompt.
@@ -314,7 +316,7 @@ extending Claude's capabilities without bloating the system prompt.
 `Art` `BeCreative` `Ideate` `Webdesign` `WriteStory`
 
 **Infrastructure**
-`Agents` `CreateCLI` `CreateSkill` `Daemon` `Delegation` `DualCheck` `Evals`
+`Agents` `CreateCLI` `CreateSkill` `Delegation` `DualCheck` `Evals`
 `ISA` `Loop` `Migrate` `Optimize` `PAIUpgrade` `Prompting` `SessionFork` `TmuxCliDriver` `Verify`
 
 **Security**
@@ -350,8 +352,8 @@ on your phone or in a cloud you don't control.
 
 You're in Claude Code. Go forth — fix, improve, extend as you see fit.
 
-Do us all a favor: ask it to work carefully. Use the scope gate. Let OBSERVE finish before it
-builds anything. Run the security pipeline on changes before pushing. If you're adding a skill,
+Do us all a favor: ask it to work carefully. Have it record scope in `## Decisions`
+and name the probe that proves "done" before it builds anything. Run the security pipeline on changes before pushing. If you're adding a skill,
 have it write a test. If you're modifying a hook, smoke-test it with synthetic stdin before
 assuming the typecheck passing means anything.
 

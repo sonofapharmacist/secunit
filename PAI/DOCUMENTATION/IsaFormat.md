@@ -61,7 +61,7 @@ The fluff version can be satisfied with anything because no test would catch its
 
 **v6.0.x mechanics (forthcoming):** parser updates so `ISASync.hook.ts`, `CheckpointPerISC.hook.ts`, and `hooks/lib/isa-utils.ts` discover `<project>/ISA.md` alongside `MEMORY/WORK/` paths; OBSERVE/PLAN inheritance resolver; Pulse rendering for two homes; project-ISA seeding migration for existing projects.
 
-**Backwards-compat (HISTORICAL — fully removed):** Through Algorithm v4.1.x hooks read `ISA.md` first and fell back to legacy `PRD.md` when present. The `PRD.md` fallback was removed at Algorithm v4.2.0. Algorithm is now at v7.0.0; any remaining `PRD.md` files in `MEMORY/WORK/` are inert legacy artifacts and are not read by any hook or skill.
+**Backwards-compat (HISTORICAL — fully removed):** Through Algorithm v4.1.x hooks read `ISA.md` first and fell back to legacy `PRD.md` when present. The `PRD.md` fallback was removed at Algorithm v4.2.0. Algorithm is now at v7.0.0; any remaining `PRD.md` files in `MEMORY/WORK/` are inert legacy artifacts and are not read by any hook or skill, except `CheckpointPerISC.hook.ts`, which still checks for `PRD.md` as a fallback trigger name.
 
 ## Frontmatter (YAML)
 

@@ -159,7 +159,7 @@ interface StopPayload extends BasePayload {
 | Hook | Purpose | Blocking | Dependencies |
 |------|---------|----------|--------------|
 | `SecurityPipeline.hook.ts` | Inspector pipeline: Pattern(100) → Egress(90) → Rules(50) | Yes (decision) | `patterns.yaml`, `SECURITY_RULES.md`, `MEMORY/SECURITY/` |
-| `ContextReduction.hook.sh` | Context reduction — compresses Bash command output via RTK | Yes (updatedInput) | `rtk` binary, `jq` |
+| `ContextReduction.hook.sh` | Context reduction — rewrites terminal-bound Bash commands via `rtk rewrite` (never piped ones) | Yes (updatedInput) | `rtk` binary, `jq` |
 | `SetQuestionTab.hook.ts` | Set teal tab for questions | No | Kitty terminal |
 | *(Pulse HTTP route)* AgentGuard | Guard agent spawning — `localhost:31337/hooks/agent-guard` | Yes (decision) | Pulse server |
 | *(Pulse HTTP route)* SkillGuard | Prevent erroneous skill invocations — `localhost:31337/hooks/skill-guard` | Yes (decision) | Pulse server |

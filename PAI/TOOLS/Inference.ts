@@ -40,7 +40,7 @@
  *
  * DEFAULTS BY LEVEL:
  *   fast:     model=haiku,         timeout=20s
- *   standard: model=sonnet,        timeout=30s
+ *   standard: model=claude-sonnet-5-5, timeout=30s
  *   smart:    model=opus,          timeout=90s
  *   fable:    model=claude-fable-5, timeout=600s (API-direct; effort xhigh default; betas support)
  *   advisor:  model=opus,          timeout=120s
@@ -74,7 +74,7 @@ import { spawn } from "child_process";
 import { appendFile, appendFileSync, mkdir, mkdirSync, readFileSync } from "fs";
 import { hostname } from "os";
 import { runJailed } from "./AgyJail";
-import { join } from "path";
+import { basename, join } from "path";
 
 import {
   getSkillRoutingPreference,
@@ -321,7 +321,8 @@ export interface InferenceResult {
 // Level configurations
 const LEVEL_CONFIG: Record<InferenceLevel, { model: string; defaultTimeout: number }> = {
   fast: { model: 'haiku', defaultTimeout: 20000 },
-  standard: { model: 'sonnet', defaultTimeout: 30000 },
+  // Pinned 2026-10-02 (was alias 'sonnet'): Sonnet 5.5 benched 50/53 unified, 9.01 threat.
+  standard: { model: 'claude-sonnet-5-5', defaultTimeout: 30000 },
   smart: { model: 'opus', defaultTimeout: 90000 },
   // Fable 5 (released 2026-06-09) — frontier tier with always-on thinking,
   // effort dial (low|medium|high|xhigh|max), and server-side Opus 4.8 fallback
@@ -467,7 +468,7 @@ const DEFAULT_GENERAL_MODEL = 'gemma4:latest';
 // qwen3_next_80b_a3b prod migration (was qwen3:30b-a3b). Keep this in sync manually;
 // there's no single source of truth shared between the two.
 const DEFAULT_FALLBACK_MODELS: Record<InferenceLevel, string> = {
-  fast: 'jackrong_v4_pro_qwen35_9b_mtp', // mirrors PAI_CONFIG fallback_models.fast since the 2026-08-14 fast-tier move (llama-server-fast, :11436)
+  fast: 'kat_coder_v25_apex', // mirrors PAI_CONFIG fallback_models.fast since the 2026-09-29 KAT swap (llama-server-fast, :11436; was jackrong 9B)
   standard: 'qwen3_next_80b_a3b', // Qwen3-Next-80B MoE, 47/53 unified bench — replaces Sonnet for mode classification
   smart: 'qwen3_next_80b_a3b',    // best available locally — replaces Opus for advisor calls
   fable: 'qwen3_next_80b_a3b',    // Fable 5 has no local model; fallback to best local is graceful degrade not parity
@@ -768,6 +769,9 @@ function logInferenceCall(
       fallback_used: result.fallbackUsed ?? false,
       escalated_from_local: result.escalatedFromLocal ?? false,
       shell_mode: detectShellMode(),
+      // Which script asked, so per-job volume and escalation rates are readable.
+      // PAI_INFERENCE_CALLER overrides for callers that shell out to the CLI.
+      caller: process.env.PAI_INFERENCE_CALLER || basename(process.argv[1] ?? '') || 'unknown',
     };
     if (result.promptTokens !== undefined) base.prompt_tokens = result.promptTokens;
     if (result.completionTokens !== undefined) base.completion_tokens = result.completionTokens;

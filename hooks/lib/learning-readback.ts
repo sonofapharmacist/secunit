@@ -11,7 +11,7 @@
  * - loadLearningDigest()    — Recent learning signals (ALGORITHM + SYSTEM)
  * - loadWisdomFrames()      — Crystallized behavioral patterns (WISDOM/FRAMES)
  * - loadFailurePatterns()   — Recent failure insights (FAILURES)
- * - loadSignalTrends()      — Performance metrics from learning-cache.sh
+ * - loadSignalTrends()      — Typed-rating averages from ratings.jsonl
  * - loadSynthesisPatterns() — Most recent weekly complaint synthesis (SYNTHESIS)
  *
  * PERFORMANCE:
@@ -25,6 +25,18 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
+
+/** Date the explicit-rating parser stopped counting replies like "1 pls" as ratings. */
+const RATING_PARSER_FIXED = '2026-10-02';
+
+/**
+ * Explicit low-rating notes written before the parser fix with a comment attached were
+ * answers to numbered options ("1 is doctrine make it so", "2 3 in a row pls"), not
+ * ratings. Every one checked on 2026-10-02 was. Bare-number ratings are kept.
+ */
+function isMisreadRating(file: string, content: string, feedback: string): boolean {
+  return /^source:\s*explicit/m.test(content) && feedback !== '' && file.slice(0, 10) < RATING_PARSER_FIXED;
+}
 
 /**
  * Read the N most recent learning files from a LEARNING subdirectory.
@@ -50,7 +62,8 @@ function getRecentLearnings(baseDir: string, subdir: string, count: number): str
 
       try {
         const files = readdirSync(monthPath)
-          .filter(f => f.endsWith('.md'))
+          // _sentiment-rating- notes came from the implicit grader retired 2026-10-02 (55-63% precision).
+          .filter(f => f.endsWith('.md') && !f.includes('_sentiment-rating-'))
           .sort()
           .reverse();
 
@@ -58,12 +71,14 @@ function getRecentLearnings(baseDir: string, subdir: string, count: number): str
           if (insights.length >= count) break;
           try {
             const content = readFileSync(join(monthPath, file), 'utf-8');
-            const feedbackMatch = content.match(/\*\*Feedback:\*\*\s*(.+)/);
+            // [ \t]* not \s*: an empty Feedback line must not capture the next line ("---").
+            const feedbackMatch = content.match(/\*\*Feedback:\*\*[ \t]*(.*)/);
             const ratingMatch = content.match(/rating:\s*(\d+)/);
             if (feedbackMatch) {
+              const feedback = feedbackMatch[1].trim();
+              if (isMisreadRating(file, content, feedback)) continue;
               const rating = ratingMatch ? ratingMatch[1] : '?';
-              const feedback = feedbackMatch[1].substring(0, 80);
-              insights.push(`[${rating}/10] ${feedback}`);
+              insights.push(`[${rating}/10] ${feedback ? feedback.substring(0, 80) : '(no comment)'}`);
             }
           } catch { /* skip unreadable files */ }
         }
@@ -247,34 +262,37 @@ export function loadSynthesisPatterns(paiDir: string): string | null {
   return null;
 }
 
+export interface RatingRow { timestamp: string; rating: number; source?: string; comment?: string }
+
 /**
- * Load performance signal trends from the pre-computed learning-cache.sh.
- * Extracts numeric averages and trend direction for a compact status line.
+ * Typed ratings only. Implicit (LLM-guessed) rows were retired 2026-10-02, and explicit
+ * rows from before the parser fix that carry a comment were option picks, not ratings.
+ * Exported for tests.
  */
+export function summarizeTypedRatings(rows: RatingRow[], now: number): string | null {
+  const typed = rows.filter(r =>
+    (r.source === 'explicit' || r.source === 'user_explicit') &&
+    typeof r.rating === 'number' &&
+    !(r.comment && r.timestamp.slice(0, 10) < RATING_PARSER_FIXED));
+  const window = (days: number) => typed.filter(r => now - Date.parse(r.timestamp) <= days * 86_400_000);
+  const fmt = (rs: RatingRow[]) => rs.length ? `${(rs.reduce((a, r) => a + r.rating, 0) / rs.length).toFixed(1)}/10 (n=${rs.length})` : 'none';
+  const week = window(7), month = window(30);
+  // Under 3 ratings is an anecdote, not a signal (a lone bare "1" may itself be an option pick).
+  if (month.length < 3) return null;
+  return `**Typed ratings:** Week: ${fmt(week)} | Month: ${fmt(month)}`;
+}
+
+/** Hidden under 3 typed ratings in 30 days: no line beats an invented score. */
 export function loadSignalTrends(paiDir: string): string | null {
-  const cachePath = join(paiDir, 'MEMORY', 'STATE', 'learning-cache.sh');
-  if (!existsSync(cachePath)) return null;
-
+  const path = join(paiDir, 'MEMORY', 'LEARNING', 'SIGNALS', 'ratings.jsonl');
+  if (!existsSync(path)) return null;
   try {
-    const content = readFileSync(cachePath, 'utf-8');
-
-    // Parse shell variable assignments (key='value' or key=value)
-    const vars: Record<string, string> = {};
-    for (const line of content.split('\n')) {
-      const match = line.match(/^(\w+)='?([^']*)'?$/);
-      if (match) vars[match[1]] = match[2];
+    const rows: RatingRow[] = [];
+    for (const line of readFileSync(path, 'utf-8').split('\n')) {
+      if (!line.includes('explicit')) continue;
+      try { rows.push(JSON.parse(line)); } catch { /* skip bad row */ }
     }
-
-    const todayAvg = vars.today_avg || '?';
-    const weekAvg = vars.week_avg || '?';
-    const monthAvg = vars.month_avg || '?';
-    const trend = vars.trend || 'stable';
-    const totalCount = vars.total_count || '?';
-    const dayTrend = vars.day_trend || 'stable';
-
-    const trendEmoji = trend === 'up' ? 'trending up' : trend === 'down' ? 'trending down' : 'stable';
-
-    return `**Performance Signals:** Today: ${todayAvg}/10 | Week: ${weekAvg}/10 | Month: ${monthAvg}/10 | Trend: ${trendEmoji} | Total signals: ${totalCount}`;
+    return summarizeTypedRatings(rows, Date.now());
   } catch {
     return null;
   }

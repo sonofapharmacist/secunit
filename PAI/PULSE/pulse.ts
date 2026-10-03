@@ -65,6 +65,7 @@ import {
 } from "./lib"
 
 import { startHooks, handleHooksRequestAsync, hooksHealth } from "./modules/hooks"
+import { breakerAction, transitionAlert } from "./JobBreaker"
 
 // Conditional imports — modules may not exist yet during incremental migration
 let notifyModule: any = null
@@ -196,7 +197,6 @@ async function loadPulseConfig(): Promise<PulseConfig> {
 
 const STATE_PATH = join(PULSE_DIR, "state", "state.json")
 const PID_PATH = join(PULSE_DIR, "state", "pulse.pid")
-const MAX_FAILURES = 3
 const MAX_SLEEP_MS = 60_000
 const MIN_SLEEP_MS = 1_000
 
@@ -503,12 +503,12 @@ async function main() {
 
       if (!isDue(job.schedule, now, jobState?.lastRun)) continue
 
-      if ((jobState?.consecutiveFailures ?? 0) >= MAX_FAILURES) {
-        log("warn", `Skipping ${job.name}: ${jobState!.consecutiveFailures} consecutive failures`, {
-          lastResult: jobState!.lastResult,
-        })
-        continue
-      }
+      // Half-open breaker: tripped jobs get one probe run per day (JobBreaker.ts, alerting ISA ISC-23)
+      const breaker = breakerAction(jobState, Date.now())
+      if (breaker === "skip") continue
+      if (breaker === "probe") log("info", `Probing tripped job ${job.name} (${jobState!.consecutiveFailures} consecutive failures)`, { subsystem: "cron" })
+      const failuresBefore = jobState?.consecutiveFailures ?? 0
+      let lastError: string | undefined
 
       log("info", `Running: ${job.name}`, { type: job.type, subsystem: "cron" })
       const startMs = Date.now()
@@ -542,6 +542,7 @@ async function main() {
       } catch (err) {
         const failures = (jobState?.consecutiveFailures ?? 0) + 1
         state.jobs[job.name] = { lastRun: Date.now(), lastResult: "error", consecutiveFailures: failures }
+        lastError = String(err)
         log("error", `${job.name} failed`, {
           error: String(err),
           failures,
@@ -553,6 +554,13 @@ async function main() {
       await writeState(STATE_PATH, state).catch((err) =>
         log("error", "Failed to persist state", { error: String(err) })
       )
+
+      const transition = transitionAlert(job.name, failuresBefore, state.jobs[job.name].consecutiveFailures, lastError)
+      if (transition && notifyModule?.deliverAlert) {
+        await notifyModule.deliverAlert(transition).catch((err: unknown) =>
+          log("error", "Breaker alert failed", { job: job.name, error: String(err) })
+        )
+      }
     }
 
     const nextDueMs = msUntilNextDue(config.jobs, state)

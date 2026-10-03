@@ -818,16 +818,34 @@ YOUR WORKFLOW:
 
 // ─── Parallel Iteration Runner ──────────────────────────────────────────────
 
+/**
+ * Env for every `claude` this tool spawns. Billing: ANTHROPIC_API_KEY and
+ * ANTHROPIC_AUTH_TOKEN both outrank the subscription OAuth token, and bun auto-loads
+ * .env, so both are stripped or the run bills the API (CLAUDE.md; the April 2026 $498
+ * was `--bare` plus an inherited key). CLAUDECODE is dropped so a nested launch works.
+ *
+ * `automated` is required on purpose, so every call site states whether a person is at
+ * the keyboard. Loop workers pass a label: hooks/lib/automated-session.ts then keeps the
+ * memory and learning hooks from recording generated prompts as GP speaking. Interactive
+ * and ideate sessions pass null: GP is typing, so those hooks should run.
+ */
+function claudeEnv(automated: string | null): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>;
+  delete env.CLAUDECODE;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  if (automated !== null) env.PAI_AUTOMATED_SESSION = automated;
+  else delete env.PAI_AUTOMATED_SESSION;
+  return env;
+}
+
 async function runParallelIteration(
   isaPath: string,
   assignments: AgentAssignment[],
   iteration: number,
 ): Promise<void> {
   const startTime = Date.now();
-  // BILLING: subscription, not API. Remove --bare (forces ANTHROPIC_API_KEY),
-  // strip the key from inherited env (bun auto-loads .env).
-  const workerEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-  delete workerEnv.ANTHROPIC_API_KEY;
+  const workerEnv = claudeEnv("algorithm-loop-worker");
   const processes = assignments.map(assignment => {
     const criterion = assignment.criteriaDetails[0]; // One criterion per agent
     const prompt = buildWorkerPrompt(isaPath, assignment.agentId, criterion, iteration);
@@ -1313,13 +1331,15 @@ async function runLoop(isaPath: string, maxOverride?: number, agentCount: number
     // ── Sequential path: single agent (existing behavior) ──
     const prompt = buildIterationPrompt(absPath, newIteration, max);
 
+    // No --bare: it forces ANTHROPIC_API_KEY auth (API billing), see claudeEnv().
     const result = spawnSync("claude", [
-      "-p", "--bare", prompt,
+      "-p", prompt,
       "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep,WebFetch,WebSearch,Task,TaskCreate,TaskUpdate,TaskList,NotebookEdit",
     ], {
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 600_000, // 10 minute timeout per iteration
       cwd: dirname(absPath), // Run from ISA's directory context
+      env: claudeEnv("algorithm-loop"),
     });
 
     const iterEndTime = Date.now();
@@ -1432,7 +1452,7 @@ function runInteractive(isaPath: string): void {
   ], {
     stdio: "inherit",
     cwd: dirname(absPath),
-    env: { ...process.env, CLAUDECODE: undefined },
+    env: claudeEnv(null), // GP is at the keyboard: hooks run, billing scrubbed
   });
 
   child.on("exit", (code) => {
@@ -1498,7 +1518,7 @@ function runIdeate(
   ], {
     stdio: "inherit",
     cwd: dirname(absPath),
-    env: { ...process.env, CLAUDECODE: undefined },
+    env: claudeEnv(null), // GP is at the keyboard: hooks run, billing scrubbed
   });
 
   child.on("exit", (code) => {

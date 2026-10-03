@@ -59,9 +59,12 @@ async function main() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        title: 'Session stopped on API error',
         message: 'API error ended the turn. Check the session.',
+        severity: 'P2',
+        source: 'stop-failure',
       }),
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(1500),
     });
   } catch {
     // Silent — Pulse may be down

@@ -437,6 +437,19 @@ brew install trufflehog
 
 ---
 
+## DiskPrune.ts - Weekly Cache and Log Prune
+
+**Location:** `PAI/TOOLS/DiskPrune.ts` (test: `DiskPrune.test.ts`). Pulse job `disk-prune`, Sundays 04:30.
+
+This tool deletes regenerable caches and logs by age: bun cache over 30 days, all of `.npm`, agy and MCP logs over 14 days, secunit release stages over 3 days, and `~/.local/bin/*.old` over 7 days. It also runs `uv cache prune`. It only reports on data (`~/backups`, `.claude/.git`, session transcripts, extra git worktrees) and never deletes it. Freed space is measured with statfs, not du, because bun hardlinks installs out of its cache.
+
+```bash
+bun PAI/TOOLS/DiskPrune.ts --dry-run          # candidates only
+bun PAI/TOOLS/DiskPrune.ts --notify           # alert via Pulse if / stays >= 85% or a target errors
+```
+
+---
+
 ## ReleaseLeakTest.ts - Prove the Release Gates Strip and Block
 
 **Location:** `PAI/TOOLS/ReleaseLeakTest.ts`

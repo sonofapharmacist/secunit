@@ -2,13 +2,14 @@
 
 **Desktop and push notifications for PAI workflows and task execution.**
 
-> **Infrastructure:** The notification endpoint (`http://localhost:31337/notify`) is served by the unified Pulse daemon (`~/.claude/PAI/PULSE/`). It is implemented at `~/.claude/PAI/PULSE/Notify.ts` and routed through Pulse -- there is no separate notification process. One daemon, one port, one launchd plist (`com.pai.pulse`).
+> **Infrastructure:** The notification endpoint (`http://localhost:31337/notify`) is served by the unified Pulse daemon (`~/.claude/PAI/PULSE/`). It is implemented at `~/.claude/PAI/PULSE/Notify.ts` and routed through Pulse -- there is no separate notification process. One daemon, one port, run by launchd (`com.pai.pulse`) on macOS or a systemd user unit on Linux.
 
 > **Text-to-speech was removed on 2026-08-08.** PAI previously synthesized spoken audio through ElevenLabs. That integration -- the API key, voice IDs, prosody and `voice_settings` tuning, and audio playback -- is gone with no replacement provider. `/notify` remains the general notification and progress ingestion endpoint; it now delivers a desktop notification and nothing more. Requests that still carry `voice_id`, `voice_enabled`, or `voice_settings` fields are accepted and ignored, so existing callers keep working unchanged.
 
 This system provides:
 - Desktop notification feedback when workflows start
-- Consistent user experience across all skills
+- Severity-routed alerts to your phone through ntfy (P0 / P1 / P2), with quiet hours, dedup and flood control
+- A daily delivery self-test, a local-LLM health check and a morning digest, all as Pulse jobs
 
 ---
 
@@ -18,18 +19,19 @@ This system provides:
 
 | Route | Method | Behavior |
 |-------|--------|----------|
-| `/notify` | POST | Main endpoint. Reads `title` (default `"PAI Notification"`) and `message` (default `"Task completed"`), then sends a desktop notification. |
+| `/notify` | POST | Main endpoint. Body: `title` (default `"PAI Notification"`), `message`, `severity` (`P0` / `P1` / `P2`, default `P2`), `source`, `id`, `link`, `markdown`. Governs the alert, then sends it to every channel whose threshold it reaches. |
 | `/notify/personality` | POST | Compatibility shim for legacy callers. Sends the notification under the title `"PAI Notification"`. |
 | `/voice` | POST | Legacy path alias, kept so existing callers do not need updating. Default title `"PAI Assistant"`. No audio despite the name. |
-| `/notify/health` | GET | Returns `initialized`, `enabled`, and `desktop_notifications`. |
+| `/notify/health` | GET | Channels with their `min_severity` and last delivery, `quiet_hours`, `held`, `flood_suppressed`, and a `warning` when no channel is configured. |
 
 On the way through, every request gets:
 
-1. **Input sanitization** -- message text is cleaned and escaped before it reaches AppleScript
-2. **Rate limiting** -- 10 requests per 60-second window per client IP; over the limit returns HTTP 429
-3. **Desktop notification** -- macOS native, via `osascript`
+1. **Input sanitization** -- message text is cleaned and escaped before it reaches a desktop notifier
+2. **Rate limiting** -- 10 requests per 60-second window per client IP; over the limit returns HTTP 429. P0 is never rate-limited.
+3. **The governor** -- dedup, quiet hours and flood control (see *Severity and the Governor* below)
+4. **Delivery** -- each configured channel at or above its threshold; the result comes back as `deliveries` and is logged to `MEMORY/OBSERVABILITY/alerts.jsonl`
 
-Success responses are `{"status": "success", "message": "..."}`. Failures return `{"status": "error", "message": "..."}` with 400 for invalid input and 500 otherwise.
+Success responses are `{"status": "success", "message": "...", "deliveries": [...]}`. Failures return `{"status": "error", "message": "..."}` with 400 for invalid input and 500 otherwise.
 
 **What it does not do:** text-to-speech synthesis, ElevenLabs API calls, audio playback, or voice ID resolution.
 
@@ -179,114 +181,94 @@ The backgrounded `&` and redirected output (`> /dev/null 2>&1`) ensure the curl 
 
 ---
 
-## External Notifications (Push, Discord)
+## Alerting: Severity, Channels and the Governor
 
-**Beyond desktop notifications, PAI supports external notification channels:**
+Anything that needs a human posts to `/notify` with a severity. Pulse decides whether and where it goes. Callers never talk to a phone service directly.
 
-### Available Channels
+### Severity
 
-| Channel | Service | Purpose | Configuration |
-|---------|---------|---------|---------------|
-| **ntfy** | ntfy.sh | Mobile push notifications | `settings.json → notifications.ntfy` |
-| **Discord** | Webhook | Team/server notifications | `settings.json → notifications.discord` |
-| **Desktop** | macOS native | Local desktop alerts | Always available |
+| Severity | Meaning | Phone (ntfy) | Quiet hours | Dedup window |
+|---|---|---|---|---|
+| **P0** | Act now: a canary token tripped, a security gate fired | Priority 5 | Delivered | 1 h, so an unresolved P0 pages again hourly |
+| **P1** | Act today: a job stopped, a local model is down, a high-severity review finding | Priority 4 | Held, sent as one summary when quiet hours end | 24 h |
+| **P2** | FYI: recoveries, tallies, task titles | Not sent | Not applicable | 24 h |
 
-### Smart Routing
+P2 stays on the desktop and lands in the morning digest.
 
-Notifications are automatically routed based on event type:
+### Channels
 
-| Event | Default Channels | Trigger |
-|-------|------------------|---------|
-| `taskComplete` | Desktop only | Normal task completion |
-| `longTask` | Desktop + ntfy | Task duration > 5 minutes |
-| `backgroundAgent` | ntfy | Background agent completes |
-| `error` | Desktop + ntfy | Error in response |
-| `security` | Desktop + ntfy + Discord | Security alert |
+Channels come from `settings.json → notifications` (`PULSE/NotifyChannels.ts`):
+
+| Channel | Threshold | Notes |
+|---|---|---|
+| **Desktop** | P2 | macOS `osascript`, Linux `notify-send`, WSL PowerShell toast. Auto-detected; disable with `desktop.enabled: false`. |
+| **ntfy** | P1 | Any ntfy server: ntfy.sh or self-hosted. Token via `tokenEnv` (sent as `Authorization: Bearer`, never in the URL). |
+
+**`trusted` controls what leaves the machine.** With `trusted: false` (the default) ntfy gets ids only: severity, source and alert id, no title or message text. Set `trusted: true` only for a server you control, such as one on your tailnet, because alert text can carry paths, findings and session details.
+
+### The Governor
+
+`PULSE/NotifyGovernor.ts` runs before delivery. State is kept in `PULSE/state/notify-governor.json`.
+
+- **Dedup.** An alert's fingerprint is its severity, source, title and message. An identical alert inside its dedup window sends nothing.
+- **Quiet hours.** P1s arriving inside `quietHours` are held. On the first tick after the window ends, they are released as one summary. Windows may wrap midnight. P0 always goes through.
+- **Flood control.** More than 5 P1s from one source in an hour are collapsed: the rest are counted, and one summary is sent when the hour ends.
 
 ### Configuration
 
-Located in `~/.claude/settings.json`:
+In `~/.claude/settings.json`:
 
 ```json
 {
   "notifications": {
     "ntfy": {
       "enabled": true,
-      "topic": "pai-[random-topic]",
-      "server": "ntfy.sh"
+      "server": "https://ntfy.example.net",
+      "topic": "${NTFY_TOPIC}",
+      "tokenEnv": "NTFY_TOKEN",
+      "trusted": false
     },
-    "discord": {
-      "enabled": false,
-      "webhook": "https://discord.com/api/webhooks/..."
-    },
-    "thresholds": {
-      "longTaskMinutes": 5
-    },
-    "routing": {
-      "taskComplete": [],
-      "longTask": ["ntfy"],
-      "backgroundAgent": ["ntfy"],
-      "error": ["ntfy"],
-      "security": ["ntfy", "discord"]
-    }
+    "quietHours": { "start": "22:00", "end": "07:00", "timeZone": "America/New_York" }
   }
 }
 ```
 
-### ntfy.sh Setup
+`${VAR}` values are expanded from Pulse's environment, so the topic and token stay out of `settings.json`. Point Pulse at an env file (for systemd, a drop-in with `EnvironmentFile=`) holding `NTFY_TOPIC`, `NTFY_TOKEN` and, optionally, `NTFY_BACKUP_TOPIC`.
 
-1. **Generate topic**: `echo "pai-$(openssl rand -hex 8)"` _(topic is effectively a shared secret — anyone who knows it can read your notifications, so keep it unpredictable)_
-2. **Install app**: iOS App Store or Android Play Store → "ntfy"
-3. **Subscribe**: Add your topic in the app
-4. **Test**: `curl -d "Test" ntfy.sh/your-topic`
+### Setting Up ntfy
 
-Topic name acts as password - use random string for security.
+**Hosted (quickest).** Generate an unguessable topic: `echo "pai-$(openssl rand -hex 8)"`. Anyone who knows it can read and post, so keep `trusted: false`. Install the ntfy app on your phone, subscribe to the topic, and leave `server` empty (it defaults to ntfy.sh).
 
-### Discord Setup
+**Self-hosted (recommended).** Run the ntfy server on a machine you control, and bind it to a private interface such as a tailnet address, not to the internet.
+1. In `server.yml`, set `auth-default-access: deny-all` and turn sign-ups off.
+2. Create two users: one for your phone (read-write on your topics), and one write-only user for PAI, with an access token.
+3. Put the token in the env file as `NTFY_TOKEN`, set `server` to the private address, and set `trusted: true`.
+4. Subscribe from the phone app using the phone user.
 
-1. Create webhook in your Discord server
-2. Add webhook URL to `settings.json`
-3. Set `discord.enabled: true`
+**Backup path.** If `NTFY_BACKUP_TOPIC` is set, the daily self-test also checks a topic on public ntfy.sh. When the primary path fails, it posts an ids-only alert there, so a dead server still reaches you. Subscribe to the backup topic too.
 
-### SMS (Not Recommended)
+**Test it:**
 
-**SMS is impractical for personal notifications.** US carriers require A2P 10DLC campaign registration since Dec 2024, which involves:
-- Brand registration + verification (weeks)
-- Campaign approval + monthly fees
-- Carrier bureaucracy for each number
-
-**Alternatives researched (Jan 2025):**
-
-| Option | Status | Notes |
-|--------|--------|-------|
-| **ntfy.sh** | ✅ RECOMMENDED | Same result (phone alert), zero hassle |
-| **Textbelt** | ❌ Blocked | Free tier disabled for US due to abuse |
-| **AppleScript + Messages.app** | ⚠️ Requires permissions | Works if you grant automation access |
-| **Twilio Toll-Free** | ⚠️ Simpler | 5-14 day verification (vs 3-5 weeks for 10DLC) |
-| **Email-to-SMS** | ⚠️ Carrier-dependent | `number@vtext.com` (Verizon), `@txt.att.net` (AT&T) |
-
-**Bottom line:** ntfy.sh already alerts your phone. SMS adds carrier bureaucracy for the same outcome.
-
-### Implementation
-
-The notification service is in `~/.claude/hooks/lib/notifications.ts`:
-
-```typescript
-import { notify, notifyTaskComplete, notifyBackgroundAgent, notifyError } from './lib/notifications';
-
-// Smart routing based on task duration
-await notifyTaskComplete("Task completed successfully");
-
-// Explicit background agent notification
-await notifyBackgroundAgent("Researcher", "Found 5 relevant articles");
-
-// Error notification
-await notifyError("Database connection failed");
-
-// Direct channel access
-await sendPush("Message", { title: "Title", priority: "high" });
-await sendDiscord("Message", { title: "Title", color: 0x00ff00 });
+```bash
+curl -s -X POST localhost:31337/notify -H 'Content-Type: application/json' \
+  -d '{"title":"Test","message":"P1 test, not a real alert","severity":"P1","source":"manual"}'
+curl -s localhost:31337/notify/health
 ```
+
+### Pulse Jobs That Alert
+
+| Job | Schedule | What it does |
+|---|---|---|
+| Job breaker (built into `pulse.ts`, `PULSE/JobBreaker.ts`) | Every job run | A job that keeps failing is stopped (P1 "Pulse job stopped"). It is retried at its next scheduled run, at most once a day, and sends P2 on recovery. |
+| `notify-selftest` | Daily 12:00 | Round-trips a message through the primary ntfy server (and the backup, if configured). P1 on failure. |
+| `llm-health` | Every 2 min | Probes local model servers from `PAI_PULSE_LLM_TIERS` (`name\|baseUrl\|alias,...`). P1 after 10 minutes down, P2 on recovery. Does nothing when unset. |
+| `morning-digest` | Daily 07:02 | The last 24 h of alerts, review findings, job failures and disk status, as one silent ntfy message. Archived to `MEMORY/OBSERVABILITY/digests/`. |
+
+### Discord and SMS
+
+Discord is not supported. The `notifications.discord` and `routing` keys may still appear in older `settings.json` files, but nothing reads them.
+
+SMS is not supported. US carriers require A2P 10DLC registration, which means weeks of brand and campaign verification plus monthly fees. ntfy reaches the same phone without any of that.
 
 ---
 
@@ -302,4 +284,4 @@ Events are emitted via `~/.claude/hooks/lib/observability-transport.ts`, which i
 1. **Fire and forget** - Notifications never block hook execution
 2. **Fail gracefully** - Missing services don't cause errors
 3. **Conservative defaults** - Avoid notification fatigue
-4. **Duration-aware** - Only push for long-running tasks (>5 min)
+4. **Severity decides reach** - Only P0 and P1 reach the phone; P2 stays on the desktop and in the digest

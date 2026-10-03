@@ -11,6 +11,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import { exitIfAutomated } from './lib/automated-session';
 
 const STATE_FILE = join(
   process.env.HOME || "",
@@ -54,6 +55,7 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
 }
 
 function main(): void {
+  exitIfAutomated('RepeatDetection');
   let input: HookInput;
   try {
     input = JSON.parse(readFileSync("/dev/stdin", "utf-8"));

@@ -32,6 +32,7 @@ import { tmpdir, homedir } from 'os'
 import { createInterface } from 'readline'
 import { parse as parseYaml, stringify as yamlStringify } from 'yaml'
 import { runSemanticLeakScan, PROSE_EXTS, type SemanticFlag } from './SemanticLeakGate'
+import { changelogSection, githubRepoSlug } from './lib/changelog-section'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -374,6 +375,22 @@ function strip() {
   rm(join(pai, 'Pulse', 'state'))  // lowercase alias
   log('  ✓ PULSE/state/ stripped')
 
+  // --- PULSE.toml nightly review → the PAI tree only --
+  // The live job also reviews the principal's personal repos; those names don't ship, and a
+  // repo missing on a fresh install would fail the job every night.
+  const pulseToml = join(pai, 'PULSE', 'PULSE.toml')
+  if (existsSync(pulseToml)) {
+    const toml = readFileSync(pulseToml, 'utf-8')
+    let kept = 0
+    const out = toml.replace(/^(command = ")(bun run \.\.\/TOOLS\/NightlyCodeReview\.ts [^"\n]*)(")$/m, (_m, pre: string, cmd: string, post: string) => {
+      const runs = cmd.split(' && ').filter(r => /--repo \S*\/\.claude(\s|$)/.test(r))
+      kept = runs.length
+      return `${pre}${runs.join(' && ')}${post}`
+    })
+    if (kept === 0) fail('  ⚠ PULSE.toml: nightly review job not found or has no ~/.claude repo — shipped unchanged')
+    else { writeFileSync(pulseToml, out, 'utf-8'); log('  ✓ PULSE.toml: nightly review limited to the PAI tree') }
+  }
+
   // --- PULSE/logs/ → strip (runtime logs contain local file paths) --
   rm(join(pai, 'PULSE', 'logs'))
   rm(join(pai, 'Pulse', 'logs'))
@@ -586,7 +603,11 @@ function sanitizeSettingsJson(stageDir: string): void {
 
   // Blank notification tokens; preserve structure and routing config
   if (raw.notifications) {
-    if (raw.notifications.ntfy) { raw.notifications.ntfy.topic = ''; raw.notifications.ntfy.enabled = false }
+    // server is the principal's own (often tailnet) ntfy host; trusted=false keeps a fresh install
+    // ids-only until its owner confirms the server is private (PULSE/NotifyChannels.ts formatForNtfy).
+    if (raw.notifications.ntfy) Object.assign(raw.notifications.ntfy, { topic: '', server: '', enabled: false, trusted: false })
+    // No timeZone → Notify.ts uses the system zone, which is the installer's, not the principal's.
+    if (raw.notifications.quietHours) delete raw.notifications.quietHours.timeZone
     if (raw.notifications.discord) { raw.notifications.discord.webhook = ''; raw.notifications.discord.enabled = false }
     if (raw.notifications.twilio) { raw.notifications.twilio.toNumber = ''; raw.notifications.twilio.enabled = false }
   }
@@ -1344,6 +1365,40 @@ function pushToForgejo(version: string): boolean {
   return true
 }
 
+/**
+ * Publish a GitHub Release for the tag just pushed, with the version's CHANGELOG
+ * section as its notes. Runs last, after the code and tag are on both remotes, so a
+ * failure here only warns (with the manual command): the release itself shipped.
+ * Before 0.9.0 no version had a Releases-page entry because this step didn't exist.
+ */
+function createGitHubRelease(version: string): void {
+  if (!GITHUB_REMOTE) return
+  log(`\n📣 Creating GitHub Release v${version}`)
+  const slug = githubRepoSlug(GITHUB_REMOTE)
+  const notesPath = join(STAGE_ROOT, `.release-notes-v${version}.md`)
+  const manual = `gh release create v${version} -R ${slug ?? '<owner/repo>'} --verify-tag --latest --notes-file <notes>`
+  if (!slug) { log(`  ⚠ Not a GitHub remote (${GITHUB_REMOTE}) — skipped`); return }
+
+  if (spawnSync('gh', ['auth', 'status'], { encoding: 'utf-8', stdio: 'pipe' }).status !== 0) {
+    log(`  ⚠ gh CLI missing or not logged in — create it by hand:\n    ${manual}`)
+    return
+  }
+  if (spawnSync('gh', ['release', 'view', `v${version}`, '-R', slug], { encoding: 'utf-8', stdio: 'pipe' }).status === 0) {
+    log(`  ✓ GitHub Release v${version} already exists — left as is`)
+    return
+  }
+
+  const changelogPath = join(STAGE_ROOT, 'CHANGELOG.md')
+  const section = existsSync(changelogPath) ? changelogSection(readFileSync(changelogPath, 'utf-8'), version) : null
+  if (!section) log(`  ⚠ No "## [${version}]" section in CHANGELOG.md — using a stub note; edit the release on GitHub`)
+  writeFileSync(notesPath, section ?? `secunit v${version}. See CHANGELOG.md.`, 'utf-8')
+
+  const r = spawnSync('gh', ['release', 'create', `v${version}`, '-R', slug, '--verify-tag', '--latest',
+    '--title', `secunit v${version}`, '--notes-file', notesPath], { encoding: 'utf-8', stdio: 'pipe' })
+  if (r.status === 0) log(`  ✓ ${r.stdout.trim()}`)
+  else log(`  ⚠ gh release create failed (the code and tag are already pushed):\n    ${(r.stderr || r.stdout).trim().slice(0, 400)}\n    Retry: ${manual}`)
+}
+
 // ── Example config templates ──────────────────────────────────────────────────
 
 const PAI_CONFIG_EXAMPLE = `# PAI_CONFIG.yaml — Fill in your values and rename to PAI_CONFIG.yaml
@@ -1590,6 +1645,7 @@ async function main() {
   const pushed = pushToForgejo(version)
   if (pushed) {
     recordReleasedVersion(version, bumps.algorithmVersion)
+    createGitHubRelease(version)  // last step; reads the staged CHANGELOG.md, so before rm(STAGE_ROOT)
     rm(STAGE_ROOT)
     if (_gitWorkDir) rm(_gitWorkDir)
     log('\n🎉 Release complete.' + (GITHUB_REMOTE ? '' : ' Set SECUNIT_GITHUB_REMOTE to also push to GitHub.'))

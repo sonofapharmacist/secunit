@@ -21,7 +21,7 @@
 
 import { appendFileSync, readFileSync } from 'fs';
 import {
-  takeQueuedEdits, enqueueEdits, applyInferenceEdits, editId, SEMANTIC_LOG, SEMANTIC_QUEUE, type InferenceEdit,
+  takeQueuedEdits, enqueueEdits, applyInferenceEdits, editId, recordRejectedTargets, SEMANTIC_LOG, SEMANTIC_QUEUE, type InferenceEdit,
 } from '../../hooks/handlers/DocCrossRefIntegrity';
 import { isFresh } from '../../hooks/lib/doc-review-digest';
 
@@ -103,7 +103,7 @@ const wanted = ids[0] === 'all' && cmd === 'reject' ? new Set(all.map(editId)) :
 const unknown = [...wanted].filter(id => !all.some(e => editId(e) === id));
 const selected = all.filter(e => wanted.has(editId(e)));
 const remaining = all.filter(e => !wanted.has(editId(e)));
-if (remaining.length) enqueueEdits(remaining);
+if (remaining.length) enqueueEdits(remaining, 'review');
 
 if (cmd === 'apply') {
   const applied = applyInferenceEdits(selected);
@@ -111,6 +111,7 @@ if (cmd === 'apply') {
   for (const a of applied) console.log(`  ${a}`);
   log(`applied ${selected.map(editId).join(',')} (${applied.length} written) queuedAt=${selected.map(e => e.queuedAt ?? '?').join(',')}`);
 } else {
+  recordRejectedTargets(selected);
   console.log(`rejected ${selected.length}: ${reason}`);
   log(`rejected ${selected.map(e => `${editId(e)}:${e.doc}`).join(',')} queuedAt=${selected.map(e => e.queuedAt ?? '?').join(',')} :: ${reason}`);
 }

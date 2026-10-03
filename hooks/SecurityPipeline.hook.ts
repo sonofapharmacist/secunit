@@ -14,7 +14,7 @@ import { InspectorPipeline } from './security/pipeline';
 import { createPatternInspector } from './security/inspectors/PatternInspector';
 import { createEgressInspector } from './security/inspectors/EgressInspector';
 import { createRulesInspector } from './security/inspectors/RulesInspector';
-import { createCanaryInspector } from './security/inspectors/CanaryInspector';
+import { createCanaryInspector, flushCanaryAlerts, pulseCanaryNotifier } from './security/inspectors/CanaryInspector';
 import { logSecurityEvent } from './security/logger';
 
 interface HookInput {
@@ -24,7 +24,7 @@ interface HookInput {
 }
 
 const pipeline = new InspectorPipeline([
-  createCanaryInspector(),
+  createCanaryInspector(pulseCanaryNotifier),
   createPatternInspector(),
   createEgressInspector(),
   createRulesInspector(),
@@ -72,6 +72,7 @@ async function main(): Promise<void> {
   switch (result.action) {
     case 'deny':
       console.error(`[PAI SECURITY] 🚨 BLOCKED: ${result.reason}`);
+      await flushCanaryAlerts(); // bounded; lets the P0 alert leave before exit
       process.exit(2);
       break;
 

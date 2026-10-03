@@ -44,6 +44,7 @@ import { loadLearningDigest, loadWisdomFrames, loadFailurePatterns, loadSignalTr
 import { findArtifactPath } from './lib/isa-utils';
 import { isV8Active } from './lib/algorithm-v8';
 import { pendingReviewDigest } from './lib/doc-review-digest';
+import { exitIfAutomated } from './lib/automated-session';
 
 interface DynamicContextConfig {
   relationshipContext?: boolean;
@@ -433,6 +434,7 @@ async function checkActiveProgress(paiDir: string): Promise<string | null> {
 }
 
 async function main() {
+  exitIfAutomated('LoadContext');
   try {
     // SessionStart hooks receive session_id via stdin JSON, not an env var —
     // Claude Code never sets CLAUDE_SESSION_ID/SESSION_ID. Read stdin first so
@@ -486,13 +488,18 @@ async function main() {
           const impState = JSON.parse(readFileSync(imperativesPath, 'utf-8'));
           // schema v1 files hold single-word captures ("to", "now") — never inject them
           if (impState?.schema_version === 2 && impState.imperatives?.length > 0) {
+            // This text lands inside the <system-reminder> block below. Escape angle
+            // brackets and flatten newlines so a stored sentence can't close the block
+            // or open a new one, including state files written before the extractor
+            // stopped capturing tag-like text (review finding a4d51fd0, 2026-09-29).
+            const inert = (s: unknown) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             const lines = impState.imperatives.map((imp: any) => {
               const countSuffix = imp.count > 1 ? ` (×${imp.count})` : '';
-              return `- [\`${imp.kind}\`] ${imp.text}${countSuffix}`;
+              return `- [\`${inert(imp.kind)}\`] ${inert(imp.text)}${countSuffix}`;
             });
             standingInstructions = `## Standing Instructions (survived compaction)
 
-These imperatives were issued earlier in this session and must still be honored:
+The user typed these earlier in this session (pasted and quoted content is excluded; extraction is pattern-based). Keep honoring them unless the user has since changed course:
 
 ${lines.join('\n')}
 `;
@@ -547,7 +554,12 @@ ${lines.join('\n')}
       if (synthesisPatterns) learningParts.push(synthesisPatterns);
       if (wisdomFrames) learningParts.push(wisdomFrames);
       if (learningDigest) learningParts.push(learningDigest);
-      if (failurePatterns) learningParts.push(failurePatterns);
+      // Paused 2026-10-02 (GP): the implicit grader files false "failures". It reads a first-time
+      // approval of the DA's own proposal as a repeated request (3/3 checked in one session were
+      // false), and these were injected here as "avoid these". Re-enable only after a precision
+      // sample clears the bar. Evidence: MEMORY/LEARNING/FAILURES/precision-sample-2026-10-02.md
+      const FAILURE_PATTERNS_PAUSED = true;
+      if (failurePatterns && !FAILURE_PATTERNS_PAUSED) learningParts.push(failurePatterns);
 
       learningContext = learningParts.length > 0
         ? '\n## Learning Context (auto-loaded)\n\n' + learningParts.join('\n\n')

@@ -61,7 +61,7 @@ command = "bun run Performance/cost-aggregator.ts"
 output = "log"
 enabled = true
 
-# Nightly autopilot code review — Forgejo repos only (pai-config, dinenasty).
+# Nightly autopilot code review — the Forgejo repos named in `command` below.
 # Report-only: writes findings to MEMORY/STATE/code-review-queue.jsonl,
 # never auto-applies fixes. Skips a repo if no commits in the last 24h.
 # timeout_ms generous: worst case per repo is 120s your-inference-host pass + 300s Sonnet validation,
@@ -73,7 +73,7 @@ enabled = true
 name = "nightly-code-review"
 schedule = "23 4 * * *"
 type = "script"
-command = "bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/.claude --label pai-config && bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/code/dinenasty --label dinenasty"
+command = "bun run ../TOOLS/NightlyCodeReview.ts --repo ${HOME}/.claude --label pai-config"
 output = "log"
 enabled = true
 timeout_ms = 1800000
@@ -106,6 +106,18 @@ command = "bun run ../TOOLS/ReleaseLeakTest.ts --notify"
 output = "log"
 enabled = true
 timeout_ms = 1800000
+
+# Weekly age-based prune of regenerable caches/logs (bun, npm, agy, MCP logs, stale release stages).
+# Notifies only if / stays >= 85% after pruning, or a target errors.
+# ISA: MEMORY/WORK/20260928-152000_ubupai-disk-resize-and-prune.
+[[job]]
+name = "disk-prune"
+schedule = "30 4 * * 0"
+type = "script"
+command = "bun run ../TOOLS/DiskPrune.ts --notify"
+output = "log"
+enabled = true
+timeout_ms = 600000
 
 [[job]]
 name = "healthcheck"
@@ -187,6 +199,42 @@ type = "script"
 command = "bun run checks/life-morning-brief.ts"
 output = "log"
 enabled = true
+
+# Local LLM tier health — P1 after 10 min unhealthy, P2 on recovery; tiers from
+# PAI_PULSE_LLM_TIERS (empty → NO_ACTION). ISA: MEMORY/WORK/20261001-004342_alerting-backbone (ISC-24).
+[[job]]
+name = "llm-health"
+schedule = "*/2 * * * *"
+type = "script"
+command = "bun run checks/llm-health.ts"
+output = "log"
+enabled = true
+timeout_ms = 30000
+
+# Daily delivery self-test — round-trips a nonce through primary ntfy and the ids-only
+# ntfy.sh backup; P1 by whichever path still works if one fails. Noon so a failure lands awake.
+# ISA: MEMORY/WORK/20261001-004342_alerting-backbone (ISC-28).
+[[job]]
+name = "notify-selftest"
+schedule = "0 12 * * *"
+type = "script"
+command = "bun run checks/notify-selftest.ts"
+output = "log"
+enabled = true
+timeout_ms = 60000
+
+# Morning digest — last 24h of alerts, review tally, failing jobs, disk, doc drift, results.
+# 07:02 so the notify governor's 07:00 quiet-hours release lands first. Delivers itself
+# (silent ntfy now, email once SMTP exists); output=log keeps Pulse from double-sending.
+# ISA: MEMORY/WORK/20261001-004342_alerting-backbone (F5, ISC-17..20).
+[[job]]
+name = "morning-digest"
+schedule = "2 7 * * *"
+type = "script"
+command = "bun run MorningDigest.ts"
+output = "log"
+enabled = true
+timeout_ms = 120000
 
 # ── Current → Ideal Monitoring Spine (shipped 2026-04-15) ──
 # All disabled until P1 interview seeds preference files + IDEAL_STATE.

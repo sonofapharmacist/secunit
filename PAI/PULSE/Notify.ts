@@ -1,7 +1,8 @@
 /**
  * PAI Pulse — Notify Module
  *
- * Desktop notifications (macOS), input sanitization, rate limiting.
+ * Severity-routed delivery (desktop on macOS/Linux/WSL, ntfy), input
+ * sanitization, rate limiting. Channels live in NotifyChannels.ts.
  * Replaces VoiceServer/voice.ts after the 2026-08-08 ElevenLabs removal —
  * /notify was never voice-only; it's the general notification/progress
  * ingestion endpoint that many tools (ForgeProgress, AnvilProgress,
@@ -14,9 +15,14 @@
  * the parent pulse.ts to call on matching routes.
  */
 
-import { spawn } from "child_process"
-import { readFileSync } from "fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import { dirname, join } from "path"
 import { log } from "./lib"
+import {
+  type Alert, type Channel, type Delivery, type NotificationSettings,
+  buildChannels, detectHostDesktop, dispatch, loadNotificationSettings, parseSeverity,
+} from "./NotifyChannels"
+import { DEFAULT_GOVERNOR, type GovernorConfig, type GovernorState, decide, emptyState, tick } from "./NotifyGovernor"
 
 // ── Public Config Interface ──
 
@@ -27,13 +33,21 @@ export interface NotifyConfig {
 // ── Internal Types ──
 
 interface LoadedNotifyConfig {
-  desktopNotifications: boolean
+  channels: Channel[]
+  governor: GovernorConfig
 }
 
 // ── Module State ──
 
 let moduleConfig: NotifyConfig = { enabled: false }
-let notifyConfig: LoadedNotifyConfig = { desktopNotifications: true }
+let notifyConfig: LoadedNotifyConfig = { channels: [], governor: { ...DEFAULT_GOVERNOR, quietHours: null } }
+let governorState: GovernorState = emptyState()
+let tickTimer: ReturnType<typeof setInterval> | null = null
+let lastDelivery: { at: string; severity: string; deliveries: Delivery[] } | null = null
+
+const PAI_ROOT = process.env.PAI_DIR ?? join(process.env.HOME ?? "~", ".claude", "PAI")
+const ALERT_LOG = join(PAI_ROOT, "MEMORY", "OBSERVABILITY", "alerts.jsonl")
+const GOVERNOR_STATE = join(PAI_ROOT, "PULSE", "state", "notify-governor.json")
 let initialized = false
 
 // ── Constants ──
@@ -67,15 +81,44 @@ function checkRateLimit(ip: string): boolean {
 
 // ── Notify Config from settings.json ──
 
-function loadNotifyConfigFromSettings(): LoadedNotifyConfig {
-  const settingsPath = `${process.env.HOME ?? "~"}/.claude/settings.json`
+function governorConfig(n: NotificationSettings): GovernorConfig {
+  if (n.quietHours === false) return { ...DEFAULT_GOVERNOR, quietHours: null }
+  const q = n.quietHours ?? {}
+  return {
+    ...DEFAULT_GOVERNOR,
+    quietHours: {
+      start: q.start ?? "22:00",
+      end: q.end ?? "07:00",
+      timeZone: q.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+  }
+}
 
+function loadNotifyConfigFromSettings(): LoadedNotifyConfig {
   try {
-    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"))
-    const desktopNotifications = settings.notifications?.desktop?.enabled !== false
-    return { desktopNotifications }
-  } catch {
-    return { desktopNotifications: true }
+    const notifications: NotificationSettings = loadNotificationSettings()
+    return { channels: buildChannels(notifications, process.env, detectHostDesktop()), governor: governorConfig(notifications) }
+  } catch (err) {
+    log("warn", "Notify: could not read notification settings; desktop only", { error: String(err) })
+    return { channels: buildChannels({}, process.env, detectHostDesktop()), governor: governorConfig({}) }
+  }
+}
+
+function loadGovernorState(): GovernorState {
+  try {
+    if (existsSync(GOVERNOR_STATE)) return { ...emptyState(), ...JSON.parse(readFileSync(GOVERNOR_STATE, "utf-8")) }
+  } catch (err) {
+    log("warn", "Notify: governor state unreadable; starting empty", { error: String(err) })
+  }
+  return emptyState()
+}
+
+function saveGovernorState(): void {
+  try {
+    mkdirSync(dirname(GOVERNOR_STATE), { recursive: true })
+    writeFileSync(GOVERNOR_STATE, JSON.stringify(governorState))
+  } catch (err) {
+    log("error", "Notify: governor state write failed", { error: String(err) })
   }
 }
 
@@ -112,46 +155,78 @@ function validateInput(input: unknown): { valid: boolean; error?: string; saniti
   return { valid: true, sanitized }
 }
 
-// ── AppleScript Escaping ──
+// ── Core: Send Notification ──
 
-function escapeForAppleScript(input: string): string {
-  return input.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-}
-
-// ── macOS Desktop Notification ──
-
-async function showDesktopNotification(title: string, message: string): Promise<void> {
-  if (!notifyConfig.desktopNotifications) return
-  if (process.platform !== "darwin") return
-
+function logAlert(entry: Record<string, unknown>): void {
   try {
-    const escapedTitle = escapeForAppleScript(title)
-    const escapedMessage = escapeForAppleScript(message)
-    const script = `display notification "${escapedMessage}" with title "${escapedTitle}" sound name ""`
-
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn("/usr/bin/osascript", ["-e", script])
-      proc.on("error", reject)
-      proc.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`osascript exited ${code}`))))
-    })
-  } catch (error) {
-    log("error", "Notify: notification display error", { error: String(error) })
+    mkdirSync(dirname(ALERT_LOG), { recursive: true })
+    appendFileSync(ALERT_LOG, JSON.stringify(entry) + "\n")
+  } catch (err) {
+    log("error", "Notify: alerts.jsonl write failed", { error: String(err) })
   }
 }
 
-// ── Core: Send Notification ──
+function optionalField(v: unknown, max = 100): string | undefined {
+  return typeof v === "string" && v.trim() ? sanitizeMessage(v).substring(0, max) : undefined
+}
 
-async function sendNotification(title: string, message: string): Promise<void> {
+function optionalLink(v: unknown): string | undefined {
+  return typeof v === "string" && /^https?:\/\/[^\s]+$/.test(v) && v.length <= 500 ? v : undefined
+}
+
+async function sendNotification(title: string, message: string, extra: Record<string, unknown> = {}): Promise<Delivery[]> {
   const titleValidation = validateInput(title)
   const messageValidation = validateInput(message)
 
   if (!titleValidation.valid) throw new Error(`Invalid title: ${titleValidation.error}`)
   if (!messageValidation.valid) throw new Error(`Invalid message: ${messageValidation.error}`)
 
-  const safeTitle = titleValidation.sanitized!
-  const safeMessage = messageValidation.sanitized!
+  const alert: Alert = {
+    title: titleValidation.sanitized!,
+    message: messageValidation.sanitized!,
+    severity: parseSeverity(extra.severity),
+    source: optionalField(extra.source),
+    id: optionalField(extra.id),
+    link: optionalLink(extra.link),
+  }
 
-  await showDesktopNotification(safeTitle, safeMessage)
+  return deliverAlert(alert)
+}
+
+/**
+ * Governed delivery. Held alerts (quiet hours, flood) still reach local
+ * channels (desktop) and the log; only the push waits. Dedup sends nothing.
+ */
+export async function deliverAlert(alert: Alert): Promise<Delivery[]> {
+  const decision = decide(alert, Date.now(), governorState, notifyConfig.governor)
+  saveGovernorState()
+  const channels =
+    decision.action === "send" ? notifyConfig.channels
+    : decision.action === "dedup" ? []
+    : notifyConfig.channels.filter((c) => c.minSeverity === "P2")
+  return dispatchAndLog(alert, channels, decision.action)
+}
+
+async function dispatchAndLog(alert: Alert, channels: Channel[], governor: string): Promise<Delivery[]> {
+  const deliveries = await dispatch(alert, channels)
+  const at = new Date().toISOString()
+  lastDelivery = { at, severity: alert.severity, deliveries }
+  logAlert({ ts: at, ...alert, governor, deliveries })
+  for (const d of deliveries) {
+    if (d.outcome === "failed") log("error", "Notify: delivery failed", { channel: d.channel, error: d.error })
+  }
+  if (notifyConfig.channels.length === 0) log("warn", "Notify: no delivery channel configured; logged to alerts.jsonl only", { severity: alert.severity })
+  return deliveries
+}
+
+async function runGovernorTick(): Promise<void> {
+  try {
+    const due = tick(Date.now(), governorState, notifyConfig.governor)
+    saveGovernorState()
+    for (const summary of due) await dispatchAndLog(summary, notifyConfig.channels, "release")
+  } catch (err) {
+    log("error", "Notify: governor tick failed", { error: String(err) })
+  }
 }
 
 // ── JSON Error Response Helper ──
@@ -181,9 +256,13 @@ export function startNotify(config: NotifyConfig): void {
   }
 
   notifyConfig = loadNotifyConfigFromSettings()
+  governorState = loadGovernorState()
+  if (tickTimer) clearInterval(tickTimer)
+  tickTimer = setInterval(runGovernorTick, 60_000)
   initialized = true
-  log("info", "Notify module: initialized", {
-    desktopNotifications: notifyConfig.desktopNotifications,
+  log(notifyConfig.channels.length ? "info" : "warn", "Notify module: initialized", {
+    channels: notifyConfig.channels.map((c) => c.name),
+    quietHours: notifyConfig.governor.quietHours,
   })
 }
 
@@ -194,7 +273,12 @@ export function notifyHealth(): Record<string, unknown> {
   return {
     initialized,
     enabled: moduleConfig.enabled,
-    desktop_notifications: notifyConfig.desktopNotifications,
+    channels: notifyConfig.channels.map((c) => ({ name: c.name, min_severity: c.minSeverity })),
+    warning: notifyConfig.channels.length ? undefined : "notify: no channel",
+    last_delivery: lastDelivery,
+    quiet_hours: notifyConfig.governor.quietHours,
+    held: governorState.held.length,
+    flood_suppressed: governorState.floodSuppressed,
   }
 }
 
@@ -230,25 +314,28 @@ export async function handleNotifyRequest(req: Request): Promise<Response | null
   // All remaining routes are POST
   if (req.method !== "POST") return null
 
-  if (!checkRateLimit(clientIp)) {
-    return jsonResponse({ status: "error", message: "Rate limit exceeded" }, 429)
-  }
-
-  // POST /notify
+  // POST /notify — P0 is never rate-limited
   if (pathname === "/notify") {
     try {
       const data = await req.json()
+      if (parseSeverity(data.severity) !== "P0" && !checkRateLimit(clientIp)) {
+        return jsonResponse({ status: "error", message: "Rate limit exceeded" }, 429)
+      }
       const title = data.title || "PAI Notification"
       const message = data.message || "Task completed"
 
-      await sendNotification(title, message)
+      const deliveries = await sendNotification(title, message, data)
 
-      return jsonResponse({ status: "success", message: "Notification sent" }, 200)
+      return jsonResponse({ status: "success", message: "Notification sent", deliveries }, 200)
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
       log("error", "Notify: notification error", { error: msg })
       return jsonResponse({ status: "error", message: msg }, errorStatus(msg))
     }
+  }
+
+  if (!checkRateLimit(clientIp)) {
+    return jsonResponse({ status: "error", message: "Rate limit exceeded" }, 429)
   }
 
   // POST /notify/personality — compatibility shim for legacy callers

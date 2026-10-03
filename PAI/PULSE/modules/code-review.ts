@@ -5,27 +5,19 @@
  * over HTTP. Report-only — findings are never auto-applied.
  *
  * Routes (all GET):
- *   /queue           → unresolved findings, newest first
- *   /queue/:repo     → unresolved findings for a specific repo label
+ *   /queue           → open findings (new, recurring, resurfaced, confirmed), newest first
+ *   /queue/:repo     → open findings for a specific repo label
+ *   /summary         → finding counts by status, overall and per repo
+ *
+ * Status lifecycle and legacy-row handling live in TOOLS/lib/review-queue.ts.
  */
 
-import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
+import { countByStatus, isOpen, loadQueue as loadQueueFile, type Finding } from "../../TOOLS/lib/review-queue"
 
 const HOME = process.env.HOME ?? ""
 const QUEUE_PATH = join(HOME, ".claude", "PAI", "MEMORY", "STATE", "code-review-queue.jsonl")
 const MODULE_NAME = "code-review"
-
-interface Finding {
-  id: string
-  repo: string
-  severity: "high" | "medium" | "low"
-  file: string
-  line: number | null
-  description: string
-  created_at: string
-  resolved: boolean
-}
 
 interface ModuleState {
   running: boolean
@@ -38,20 +30,12 @@ const state: ModuleState = {
 }
 
 function loadQueue(): Finding[] {
-  if (!existsSync(QUEUE_PATH)) return []
-  let raw: string
   try {
-    raw = readFileSync(QUEUE_PATH, "utf8")
+    return loadQueueFile(QUEUE_PATH).sort((a, b) => b.last_seen.localeCompare(a.last_seen))
   } catch (err) {
     console.warn(`[${MODULE_NAME}] failed to read queue: ${err instanceof Error ? err.message : String(err)}`)
     return []
   }
-  return raw
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Finding)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
 }
 
 export async function start(): Promise<void> {
@@ -79,7 +63,13 @@ export async function handleRequest(
   path: string,
   _body: Record<string, unknown>
 ): Promise<Response> {
-  const unresolved = loadQueue().filter((f) => !f.resolved)
+  const all = loadQueue()
+  const unresolved = all.filter((f) => isOpen(f.status))
+
+  if (path === "/summary") {
+    const repos = [...new Set(all.map((f) => f.repo))]
+    return Response.json({ total: countByStatus(all), byRepo: Object.fromEntries(repos.map((r) => [r, countByStatus(all.filter((f) => f.repo === r))])) })
+  }
 
   if (path === "/queue") {
     return Response.json(unresolved)

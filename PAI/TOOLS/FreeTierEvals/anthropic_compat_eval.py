@@ -36,6 +36,12 @@ ENDPOINTS = {
         "model": "claude-opus-4-8",
         "passage_key": "api/anthropic",
     },
+    "sonnet55": {
+        "name": "Claude Sonnet 5.5 (Anthropic native, launched 2026-09-28)",
+        "url": "https://api.anthropic.com/v1/messages",
+        "model": "claude-sonnet-5-5",
+        "passage_key": "api/anthropic",
+    },
     "opus55": {
         "name": "Claude Opus 5.5 (Anthropic native, launched 2026-09-22)",
         "url": "https://api.anthropic.com/v1/messages",

@@ -84,6 +84,9 @@ export const SEMANTIC_QUEUE = join(STATE_DIR, 'doc-semantic-queue.json');
 export const SEMANTIC_LOCK = join(STATE_DIR, 'doc-semantic.lock');
 export const SEMANTIC_LOG = join(STATE_DIR, 'doc-semantic.log');
 export const SEMANTIC_STATE = join(STATE_DIR, 'doc-semantic-state.json');
+/** Targets GP rejected ({doc, old_text}), so the worker stops re-proposing them while the text stands. */
+export const SEMANTIC_REJECTED = join(STATE_DIR, 'doc-semantic-rejected.json');
+const REJECTED_CAP = 500;
 const WORKER_PATH = join(HANDLERS_DIR, 'DocSemanticWorker.ts');
 /** Auto-generated docs (header says "Do not edit manually"); semantic edits to these get overwritten. */
 const GENERATED_DOCS = new Set(['ARCHITECTURE_SUMMARY.md']);
@@ -386,8 +389,8 @@ async function notifyVoice(message: string): Promise<void> {
     await fetch('http://localhost:31337/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.timeout(3000),
-      body: JSON.stringify({ message }),
+      signal: AbortSignal.timeout(1500),
+      body: JSON.stringify({ title: 'Doc integrity', message, severity: 'P2', source: 'doc-integrity' }),
     });
   } catch {
     // Pulse may not be running — silent fail
@@ -804,8 +807,56 @@ export function editId(edit: InferenceEdit): string {
   return createHash('sha256').update(`${edit.doc}\0${edit.old_text}\0${edit.new_text}`).digest('hex').slice(0, 8);
 }
 
-/** Merge edits into the queue (dedup by id) and publish atomically (temp + rename). */
-export function enqueueEdits(edits: InferenceEdit[]): void {
+type Target = Pick<InferenceEdit, 'doc' | 'old_text'>;
+
+/**
+ * Two edits are the same proposal when they target overlapping text in the same doc, whatever
+ * their wording. Before this (2026-10-02 review), 62 of 98 queued proposals were rewordings of
+ * a pending one: the worker re-runs on every Stop and the doc doesn't change until GP reviews.
+ */
+export function sameTarget(a: Target, b: Target): boolean {
+  if (a.doc !== b.doc) return false;
+  const x = a.old_text.trim(), y = b.old_text.trim();
+  return x.length > 0 && y.length > 0 && (x.includes(y) || y.includes(x));
+}
+
+/** Rejected targets, newest last. Unreadable → empty (the worst case is a repeat proposal). */
+export function loadRejectedTargets(): Target[] {
+  try {
+    const r = JSON.parse(readFileSync(SEMANTIC_REJECTED, 'utf-8'));
+    return Array.isArray(r) ? r.filter(t => t && typeof t.doc === 'string' && typeof t.old_text === 'string') : [];
+  } catch { return []; }
+}
+
+export function recordRejectedTargets(edits: InferenceEdit[]): void {
+  const merged = [...loadRejectedTargets(), ...edits.map(e => ({ doc: e.doc, old_text: e.old_text }))].slice(-REJECTED_CAP);
+  const tmp = `${SEMANTIC_REJECTED}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(merged, null, 2));
+  renameSync(tmp, SEMANTIC_REJECTED);
+}
+
+/**
+ * Worker proposals that target the same text as a pending, rejected or earlier-in-batch edit.
+ * Pure; exported for tests.
+ */
+export function newProposals(incoming: InferenceEdit[], pending: Target[], rejected: Target[]): { fresh: InferenceEdit[]; duplicates: number; rejectedAgain: number } {
+  const fresh: InferenceEdit[] = [];
+  let duplicates = 0, rejectedAgain = 0;
+  for (const e of incoming) {
+    if (rejected.some(t => sameTarget(t, e))) rejectedAgain++;
+    else if ([...pending, ...fresh].some(t => sameTarget(t, e))) duplicates++;
+    else fresh.push(e);
+  }
+  return { fresh, duplicates, rejectedAgain };
+}
+
+/**
+ * Merge edits into the queue and publish atomically (temp + rename). `source` is required:
+ * worker proposals are deduplicated by target against the queue and rejected claims; a review
+ * putting back the edits it didn't act on keeps them all (they were already counted).
+ * Returns how many were added and why the rest weren't.
+ */
+export function enqueueEdits(edits: InferenceEdit[], source: 'worker' | 'review'): { added: number; duplicates: number; rejectedAgain: number } {
   let prior: InferenceEdit[] = [];
   if (existsSync(SEMANTIC_QUEUE)) {
     try {
@@ -817,10 +868,13 @@ export function enqueueEdits(edits: InferenceEdit[]): void {
     }
   }
   const seen = new Set(prior.map(editId));
-  const merged = [...prior, ...edits.filter(e => !seen.has(editId(e)))];
+  const unseen = edits.filter(e => !seen.has(editId(e)));
+  const r = source === 'worker' ? newProposals(unseen, prior, loadRejectedTargets()) : { fresh: unseen, duplicates: 0, rejectedAgain: 0 };
+  const merged = [...prior, ...r.fresh];
   const tmp = `${SEMANTIC_QUEUE}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(merged, null, 2));
   renameSync(tmp, SEMANTIC_QUEUE);
+  return { added: r.fresh.length, duplicates: r.duplicates + (edits.length - unseen.length), rejectedAgain: r.rejectedAgain };
 }
 
 function countQueuedEdits(): number {

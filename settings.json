@@ -75,6 +75,7 @@
     "ask": [],
     "defaultMode": "default"
   },
+  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -1341,7 +1342,7 @@
     "voiceClone": ""
   },
   "pai": {
-    "version": "0.8.1",
+    "version": "0.9.0",
     "algorithmVersion": "8.0.0",
     "repoUrl": "https://github.com/sonofapharmacist/secunit"
   },
@@ -1385,7 +1386,13 @@
     "ntfy": {
       "enabled": false,
       "topic": "",
-      "server": "ntfy.sh"
+      "server": "",
+      "tokenEnv": "NTFY_TOKEN",
+      "trusted": false
+    },
+    "quietHours": {
+      "start": "22:00",
+      "end": "07:00"
     },
     "discord": {
       "enabled": false,
@@ -1415,6 +1422,5 @@
         "discord"
       ]
     }
-  },
-  "model": "sonnet"
+  }
 }

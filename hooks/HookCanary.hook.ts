@@ -62,8 +62,8 @@ function appendLog(eventType: SecurityEvent['event_type'], files: string[]): voi
   }
 }
 
-function notifyPulse(message: string): void {
-  const payload = JSON.stringify({ message });
+function notifyPulse(message: string, severity: 'P1' | 'P2'): void {
+  const payload = JSON.stringify({ title: 'Hook integrity canary', message, severity, source: 'hook-canary' });
   const curlCommand = `curl -sS --max-time 2 -X POST -H 'Content-Type: application/json' -d ${shellQuote(payload)} ${shellQuote(PULSE_URL)}`;
 
   try {
@@ -122,7 +122,7 @@ function acknowledgeChanges(files: string[]): void {
   }
 
   appendLog('integrity_acknowledged', files);
-  notifyPulse(`Canary: acknowledged intentional change in ${files.join(', ')}`);
+  notifyPulse(`Canary: acknowledged intentional change in ${files.join(', ')}`, 'P2');
 }
 
 async function readHookInput(): Promise<HookInput> {
@@ -178,7 +178,7 @@ async function main(): Promise<void> {
   }
 
   appendLog('integrity_mismatch', files);
-  notifyPulse(`Canary: unexpected change detected in ${files.join(', ')}`);
+  notifyPulse(`Uncommitted change in ${files.length} protected file(s): ${files.slice(0, 3).join(', ')}${files.length > 3 ? ` (+${files.length - 3} more)` : ''}. If it was you, run: bun hooks/HookCanary.hook.ts --ack`, 'P1');
 }
 
 main().catch(err => {
